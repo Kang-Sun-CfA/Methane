@@ -14,7 +14,7 @@ inp760 = [];
 inp760.SZA = SZA;
 inp760.VZA = VZA;
 % wavelength, in nm
-inp760.vStart = 670; inp760.vEnd = 772; 
+inp760.vStart = 680; inp760.vEnd = 772; 
 % molecules to include
 inp760.gas_cell = {'O2','O4','H2O'};
 % spectral interval for calculation, in nm
