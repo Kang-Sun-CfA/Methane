@@ -52,7 +52,7 @@ inp1670 = [];
 inp1670.SZA = SZA;
 inp1670.VZA = VZA;
 % wavelength, in nm
-inp1670.vStart = 1590; inp1670.vEnd = 1650; 
+inp1670.vStart = 1590; inp1670.vEnd = 1709; 
 % molecules to include
 inp1670.gas_cell = {'CH4','H2O','CO2'};
 % spectral interval for calculation, in nm
