@@ -35,6 +35,12 @@ K1 = inp.K1; K2 = inp.K2; K3 = inp.K3;
 fn_pre = [gas_cell{1},'_',sprintf('%.0f',vStart),'-',sprintf('%.0f',vEnd),...
     '_',sprintf('%.2f',dv_calc),'_',sprintf('%.0f',SZA),'_',sprintf('%.0f',VZA),'_'];
 
+if isfield(inp,'xsection_O2')
+  xsection_O2 = inp.xsection_O2;
+else
+  xsection_O2 = ':   O2   -1     3 HITRAN';
+end
+
 fnin = 'input_template.gc';
 fnout = 'input.gc';
 fout = fopen(fnout,'w');
@@ -59,6 +65,7 @@ while ~feof(fin)
     s = strrep(s,'***K1***',sprintf('%f',K1));
     s = strrep(s,'***K2***',sprintf('%f',K2));
     s = strrep(s,'***K3***',sprintf('%f',K3));
+    s = strrep(s,'***xsection_O2***',sprintf('%s',xsection_O2));
     fprintf(fout,'%s',s);
 end
 fclose('all');
