@@ -67,11 +67,11 @@ addpath(matlabcode_dir)
 
 outp1670 = F_run_GCtool(inp1670);
 %% Methane 2.3 micron band, nickname 2300
-inp2300 = [];
-inp2300.SZA = SZA;
-inp2300.VZA = VZA;
+%inp2300 = [];
+%inp2300.SZA = SZA;
+%inp2300.VZA = VZA;
 % wavelength, in nm
-inp2300.vStart = 2240; inp2300.vEnd = 2380; 
+%inp2300.vStart = 2240; inp2300.vEnd = 2380; 
 % molecules to include
 inp2300.gas_cell = {'CH4','H2O','CO2','N2O','CO'};
 % spectral interval for calculation, in nm
@@ -84,4 +84,4 @@ inp2300.K1 = 0.1; inp2300.K2 = 0.1; inp2300.K3 = 0.00001;
 cd(GChome_dir)
 addpath(matlabcode_dir)
 
-outp2300 = F_run_GCtool(inp2300);
+%outp2300 = F_run_GCtool(inp2300);
