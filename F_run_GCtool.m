@@ -29,11 +29,21 @@ if isfield(inp,'dv_out')
 else
     dv_out = dv_calc;
 end
+if isfield(inp,'FWHM')
+    FWHM = inp.FWHM;
+else
+    FWHM = 2*dv_calc;
+end
 
 K1 = inp.K1; K2 = inp.K2; K3 = inp.K3;
 
+if isfield(inp,'fn_extra')
+    fn_extra = inp.fn_extra;
+else
+    fn_extra = 'test';
+end
 fn_pre = [gas_cell{1},'_',sprintf('%.0f',vStart),'-',sprintf('%.0f',vEnd),...
-    '_',sprintf('%.2f',dv_calc),'_',sprintf('%.0f',SZA),'_',sprintf('%.0f',VZA),'_'];
+    '_',sprintf('%.2f',dv_calc),'_',sprintf('%.0f',SZA),'_',sprintf('%.0f',VZA),'_',fn_extra,'_'];
 
 if isfield(inp,'xsection_O2')
   xsection_O2 = inp.xsection_O2;
@@ -58,7 +68,8 @@ while ~feof(fin)
     
     s = strrep(s,'***dv_out***',sprintf('%f',dv_out));
     s = strrep(s,'***dv_calc***',sprintf('%f',dv_calc));
-    
+    s = strrep(s,'***FWHM***',sprintf('%f',FWHM));
+
     s = strrep(s,'***ngas***',sprintf('%.0f',ngas));
     s = strrep(s,'***gas_str***',sprintf('%s',gas_str));
     
