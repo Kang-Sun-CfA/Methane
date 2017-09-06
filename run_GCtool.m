@@ -9,19 +9,39 @@ GChome_dir = '/home/kangsun/GEOCAPE-TOOL/MASTER_MODULE/';
 matlabcode_dir = '/home/kangsun/CH4/Methane/';
 SZA = 70;% in degree
 VZA = 45;
-rband = input('Which band? Choose from 760 1270 1670 2300: ','s');
-rband = sscanf(rband,'%f');
+%rband = input('Which band? Choose from 760 1270 1670 2300: ','s');
+%rband = sscanf(rband,'%f');
+rband = [760 1270 1670 2300];
 %% O2 A band, nickname 760
 if ismember(760,rband)
+inp660 = [];
+inp660.SZA = SZA;
+inp660.VZA = VZA;
+% wavelength, in nm
+inp660.vStart = 670; inp660.vEnd = 720; 
+% molecules to include
+inp660.gas_cell = {'O2','H2O'};
+% spectral interval for calculation, in nm
+inp660.dv_calc = 0.01;
+% BRDF parameters
+inp660.K1 = 0.1; inp660.K2 = 0.1; inp660.K3 = 0.00001;
+% O2 xsection, default is HITRAN line by line
+% inp760.xsection_O2 = ':   O2  -1    6  hitran_lut/o2_lut_280-800nm_0p6fwhm_1e22vcd.nc';
+
+cd(GChome_dir)
+addpath(matlabcode_dir)
+
+outp660 = F_write_GCtool_input(inp660);
+
 inp760 = [];
 inp760.SZA = SZA;
 inp760.VZA = VZA;
 % wavelength, in nm
-inp760.vStart = 670; inp760.vEnd = 772; 
+inp760.vStart = 700; inp760.vEnd = 780; 
 % molecules to include
 inp760.gas_cell = {'O2','O4','H2O'};
 % spectral interval for calculation, in nm
-inp760.dv_calc = 0.012;
+inp760.dv_calc = 0.01;
 % BRDF parameters
 inp760.K1 = 0.1; inp760.K2 = 0.1; inp760.K3 = 0.00001;
 % O2 xsection, default is HITRAN line by line
@@ -30,7 +50,7 @@ inp760.K1 = 0.1; inp760.K2 = 0.1; inp760.K3 = 0.00001;
 cd(GChome_dir)
 addpath(matlabcode_dir)
 
-outp760 = F_run_GCtool(inp760);
+outp760 = F_write_GCtool_input(inp760);
 end
 %% O2 1-Delta band, nickname 1270
 if ismember(1270,rband)
@@ -38,7 +58,7 @@ inp1270 = [];
 inp1270.SZA = SZA;
 inp1270.VZA = VZA;
 % wavelength, in nm
-inp1270.vStart = 1240; inp1270.vEnd = 1300; 
+inp1270.vStart = 1240; inp1270.vEnd = 1320; 
 % molecules to include
 inp1270.gas_cell = {'O2','O4','H2O','CO2'};
 % spectral interval for calculation, in nm
@@ -51,7 +71,25 @@ inp1270.K1 = 0.1; inp1270.K2 = 0.1; inp1270.K3 = 0.00001;
 cd(GChome_dir)
 addpath(matlabcode_dir)
 
-outp1270 = F_run_GCtool(inp1270);
+outp1270 = F_write_GCtool_input(inp1270);
+inp1270 = [];
+inp1270.SZA = SZA;
+inp1270.VZA = VZA;
+% wavelength, in nm
+inp1270.vStart = 1310; inp1270.vEnd = 1380; 
+% molecules to include
+inp1270.gas_cell = {'O2','H2O','CO2'};
+% spectral interval for calculation, in nm
+inp1270.dv_calc = 0.01;
+% BRDF parameters
+inp1270.K1 = 0.1; inp1270.K2 = 0.1; inp1270.K3 = 0.00001;
+% O2 xsection, default is HITRAN line by line
+% inp1270.xsection_O2 = ':   O2  -1    6  hitran_lut/o2_lut_280-800nm_0p6fwhm_1e22vcd.nc';
+
+cd(GChome_dir)
+addpath(matlabcode_dir)
+
+outp1270 = F_write_GCtool_input(inp1270);
 end
 %% Methane 1.6 micron band, nickname 1670
 if ismember(1670,rband)
@@ -59,11 +97,11 @@ inp1670 = [];
 inp1670.SZA = SZA;
 inp1670.VZA = VZA;
 % wavelength, in nm
-inp1670.vStart = 1590; inp1670.vEnd = 1600;%1709; 
+inp1670.vStart = 1580; inp1670.vEnd = 1670; 
 % molecules to include
 inp1670.gas_cell = {'CH4','H2O','CO2'};
 % spectral interval for calculation, in nm
-inp1670.dv_calc = 0.012;
+inp1670.dv_calc = 0.01;
 % BRDF parameters
 inp1670.K1 = 0.1; inp1670.K2 = 0.1; inp1670.K3 = 0.00001;
 % O2 xsection, default is HITRAN line by line
@@ -72,7 +110,25 @@ inp1670.K1 = 0.1; inp1670.K2 = 0.1; inp1670.K3 = 0.00001;
 cd(GChome_dir)
 addpath(matlabcode_dir)
 
-outp1670 = F_run_GCtool(inp1670);
+outp1670 = F_write_GCtool_input(inp1670);
+inp1670 = [];
+inp1670.SZA = SZA;
+inp1670.VZA = VZA;
+% wavelength, in nm
+inp1670.vStart = 1660; inp1670.vEnd = 1720; 
+% molecules to include
+inp1670.gas_cell = {'CH4','H2O','CO2'};
+% spectral interval for calculation, in nm
+inp1670.dv_calc = 0.01;
+% BRDF parameters
+inp1670.K1 = 0.1; inp1670.K2 = 0.1; inp1670.K3 = 0.00001;
+% O2 xsection, default is HITRAN line by line
+% inp1670.xsection_O2 = ':   O2  -1    6  hitran_lut/o2_lut_280-800nm_0p6fwhm_1e22vcd.nc';
+
+cd(GChome_dir)
+addpath(matlabcode_dir)
+
+outp1670 = F_write_GCtool_input(inp1670);
 end
 %% Methane 2.3 micron band, nickname 2300
 if ismember(2300,rband)
@@ -80,11 +136,11 @@ inp2300 = [];
 inp2300.SZA = SZA;
 inp2300.VZA = VZA;
 % wavelength, in nm
-inp2300.vStart = 2240; inp2300.vEnd = 2380; 
+inp2300.vStart = 2230; inp2300.vEnd = 2320; 
 % molecules to include
 inp2300.gas_cell = {'CH4','H2O','N2O','CO'};
 % spectral interval for calculation, in nm
-inp2300.dv_calc = 0.015;
+inp2300.dv_calc = 0.01;
 % BRDF parameters
 inp2300.K1 = 0.1; inp2300.K2 = 0.1; inp2300.K3 = 0.00001;
 % O2 xsection, default is HITRAN line by line
@@ -93,5 +149,23 @@ inp2300.K1 = 0.1; inp2300.K2 = 0.1; inp2300.K3 = 0.00001;
 cd(GChome_dir)
 addpath(matlabcode_dir)
 
-outp2300 = F_run_GCtool(inp2300);
+outp2300 = F_write_GCtool_input(inp2300);
+inp2300 = [];
+inp2300.SZA = SZA;
+inp2300.VZA = VZA;
+% wavelength, in nm
+inp2300.vStart = 2310; inp2300.vEnd = 2385; 
+% molecules to include
+inp2300.gas_cell = {'CH4','H2O','N2O','CO'};
+% spectral interval for calculation, in nm
+inp2300.dv_calc = 0.01;
+% BRDF parameters
+inp2300.K1 = 0.1; inp2300.K2 = 0.1; inp2300.K3 = 0.00001;
+% O2 xsection, default is HITRAN line by line
+% inp2300.xsection_O2 = ':   O2  -1    6  hitran_lut/o2_lut_280-800nm_0p6fwhm_1e22vcd.nc';
+
+cd(GChome_dir)
+addpath(matlabcode_dir)
+
+outp2300 = F_write_GCtool_input(inp2300);
 end
