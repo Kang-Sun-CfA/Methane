@@ -28,6 +28,7 @@ outp.ps = variable.ps;
 outp.ts = variable.ts;
 outp.zs = variable.zs;
 outp.tmid = (outp.ts(1:outp.nz) + outp.ts(2:outp.nz+1))/2.0;
+outp.zmid = (outp.zs(1:outp.nz) + outp.zs(2:outp.nz+1))/2.0;
 gases0 = globalattribute.gases;
 gases = cell(outp.ngas,1);
 for i = 1:outp.ngas
@@ -90,6 +91,8 @@ end
 
 if isfield(variable,'surfalb_jac')
 outp.surfalb_jac = variable.surfalb_jac./ outp.rad ./ outp.surfalb;
+else
+    outp.surfalb_jac = zeros(outp.nw,1);
 end
 
 aod_jac   = zeros(outp.nw,1);
@@ -104,10 +107,34 @@ aods0 = variable.aods0;
 aod0 = sum(aods0);
 cods0 = variable.cods0;
 cod0 = sum(cods0);
-% aods = variable.aods;
-% cods = variable.cods;
-% assas = variable.assas;
-% cssas = variable.cssas;
+
+outp.aods0 = aods0;
+outp.aod0 = aod0;
+outp.cods0 = cods0;
+outp.cod0 = cod0;
+
+if isfield(variable,'aods')
+aods = variable.aods;
+outp.aods = aods;
+end
+if isfield(variable,'cods')
+cods = variable.cods;
+outp.cods = cods;
+end
+if isfield(variable,'assas')
+assas = variable.assas;
+outp.assas = assas;
+end
+if isfield(variable,'cssas')    
+cssas = variable.cssas;
+outp.cssas = cssas;
+end
+
+outp.aod_jac = zeros(outp.nw,1);
+outp.assa_jac = zeros(outp.nw,1);
+outp.cod_jac = zeros(outp.nw,1);
+outp.cssa_jac = zeros(outp.nw,1);
+outp.cfrac_jac = zeros(outp.nw,1);
 
 do_aod_jacobian  = globalattribute.do_aod_Jacobian;% note the case sensitivity difference between IDL and matlab
 do_assa_jacobian = globalattribute.do_assa_Jacobian;
@@ -116,7 +143,7 @@ do_cssa_jacobian = globalattribute.do_cssa_Jacobian;
 do_cfrac_jacobian = globalattribute.do_cfrac_Jacobian;
 
 if do_aod_jacobian > 0 && aod0 > 0
-    for i = 1:nz
+    for i = 1:outp.nz
         if aods0(i) > 0
             aod_jac = aod_jac+variable.aod_jac(:,i);
         end
@@ -128,10 +155,10 @@ end
 waer = zeros(outp.nw,1);
 if do_assa_jacobian > 0 && aod0 > 0
     da = find(aods0 > 0);
-    for i = 1:nw
+    for i = 1:outp.nw
         waer(i) = sum(aods(i,da).*assas(i,da))/sum(aods(i,da));
     end
-    for i = 1:nz
+    for i = 1:outp.nz
         if aods0(i) > 0
             assa_jac = assa_jac+variable.assa_jac(:,i);
         end
@@ -141,7 +168,7 @@ if do_assa_jacobian > 0 && aod0 > 0
 end
 
 if do_cod_jacobian > 0 && cod0 > 0
-    for i = 1:nz
+    for i = 1:oup.nz
         if cods0(i) > 0
             cod_jac = cod_jac+variable.cod_jac(:,i);
         end
@@ -153,10 +180,10 @@ end
 wcld = zeros(outp.nw,1);
 if do_cssa_jacobian > 0 && cod0 > 0
     da = find(cods0 > 0);
-    for i = 1:nw
+    for i = 1:outp.nw
         wcld(i) = sum(cods(i,da).*cssas(i,da))/sum(cods(i,da));
     end
-    for i = 1:nz
+    for i = 1:oup.nz
         if cods0(i) > 0
             cssa_jac = cssa_jac+variable.cssa_jac(:,i);
         end
