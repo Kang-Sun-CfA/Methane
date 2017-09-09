@@ -6,7 +6,7 @@ clear
 % where gc tool is
 GChome_dir = '/home/kangsun/GEOCAPE-TOOL/MASTER_MODULE/';
 % matlab functions for this sensitivity study
-matlabcode_dir = '/home/kangsun/CH4/Methane/';
+matlabcode_dir = '/home/kangsun/CH4/Methane/matlab_functions/';
 SZA = 70;% in degree
 VZA = 45;
 %rband = input('Which band? Choose from 760 1270 1670 2300: ','s');
@@ -20,7 +20,7 @@ inp660.VZA = VZA;
 % wavelength, in nm
 inp660.vStart = 670; inp660.vEnd = 720; 
 % molecules to include
-inp660.gas_cell = {'O2','H2O'};
+inp660.gas_cell = {'O2','O4','H2O'};
 % spectral interval for calculation, in nm
 inp660.dv_calc = 0.01;
 % BRDF parameters
@@ -76,9 +76,9 @@ inp1270 = [];
 inp1270.SZA = SZA;
 inp1270.VZA = VZA;
 % wavelength, in nm
-inp1270.vStart = 1310; inp1270.vEnd = 1380; 
+inp1270.vStart = 1310; inp1270.vEnd = 1400; 
 % molecules to include
-inp1270.gas_cell = {'O2','H2O','CO2'};
+inp1270.gas_cell = {'O2','O4','H2O','CO2'};
 % spectral interval for calculation, in nm
 inp1270.dv_calc = 0.01;
 % BRDF parameters
@@ -97,7 +97,7 @@ inp1670 = [];
 inp1670.SZA = SZA;
 inp1670.VZA = VZA;
 % wavelength, in nm
-inp1670.vStart = 1580; inp1670.vEnd = 1670; 
+inp1670.vStart = 1550; inp1670.vEnd = 1640; 
 % molecules to include
 inp1670.gas_cell = {'CH4','H2O','CO2'};
 % spectral interval for calculation, in nm
@@ -115,7 +115,7 @@ inp1670 = [];
 inp1670.SZA = SZA;
 inp1670.VZA = VZA;
 % wavelength, in nm
-inp1670.vStart = 1660; inp1670.vEnd = 1720; 
+inp1670.vStart = 1630; inp1670.vEnd = 1720; 
 % molecules to include
 inp1670.gas_cell = {'CH4','H2O','CO2'};
 % spectral interval for calculation, in nm
@@ -154,7 +154,7 @@ inp2300 = [];
 inp2300.SZA = SZA;
 inp2300.VZA = VZA;
 % wavelength, in nm
-inp2300.vStart = 2310; inp2300.vEnd = 2385; 
+inp2300.vStart = 2310; inp2300.vEnd = 2400; 
 % molecules to include
 inp2300.gas_cell = {'CH4','H2O','N2O','CO'};
 % spectral interval for calculation, in nm

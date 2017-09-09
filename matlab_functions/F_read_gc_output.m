@@ -34,6 +34,11 @@ gases = cell(outp.ngas,1);
 for i = 1:outp.ngas
     idx = (i-1)*8+3;
     gases{i} = gases0(idx+1:min(idx+4,length(gases0)));
+    if length(gases{i}) < 4
+        new = '    ';
+        new(1:length(gases{i})) = gases{i};
+        gases{i} = new;
+    end
 end
 outp.gases = gases;
 % outp.lon = globalattribute.lon;
@@ -51,17 +56,31 @@ outp.surfalb = variable.surfalb;
 outp.rad = variable.radiance;
 outp.irrad = variable.irradiance;
 outp.gascol = variable.gascol;
-if isfield(inp,'gasnorm')
-    gasnorm = inp.gasnorm;
-else
-    gasnorm = ones(outp.ngas,1);
+gasnorm_all = {'H2O ',1e22;
+    'CO2 ',1e21;
+    'O3  ',1e16;
+    'N2O ',1e18;
+    'CO  ',1e18;
+    'CH4 ',1e19;
+    'O2  ',1e24;
+    'O4  ',1e43;
+    };
+gasnorm = ones(outp.ngas,1);
+for i = 1:outp.ngas
+    for j = 1:size(gasnorm_all,1)
+        if strcmp(gasnorm_all{j,1},outp.gases{i})
+            gasnorm(i) = gasnorm_all{j,2};
+        end
+    end
 end
+outp.gasnorm = gasnorm;
+
 for i = 1:outp.ngas
     outp.gascol(:, i) = outp.gascol(:, i) / gasnorm(i);
 end
 if globalattribute.do_AMF_calc
-outp.scatweights = variable.scatweights;
-outp.amf = squeeze(variable.amf);
+    outp.scatweights = variable.scatweights;
+    outp.amf = squeeze(variable.amf);
 end
 outp.gas_jac = squeeze(variable.gas_jac);
 outp.gastcol = sum(outp.gascol)';
@@ -90,11 +109,14 @@ if do_sfcprs_Jacobian > 0
 end
 
 if isfield(variable,'surfalb_jac')
-outp.surfalb_jac = variable.surfalb_jac./ outp.rad ./ outp.surfalb;
+    outp.surfalb_jac = variable.surfalb_jac./ outp.rad ./ outp.surfalb;
 else
     outp.surfalb_jac = zeros(outp.nw,1);
 end
 
+if isfield(variable,'gas_xsecs')
+    outp.gas_xsecs = variable.gas_xsecs;
+end
 aod_jac   = zeros(outp.nw,1);
 assa_jac  = aod_jac;
 cod_jac   = aod_jac;
@@ -114,20 +136,20 @@ outp.cods0 = cods0;
 outp.cod0 = cod0;
 
 if isfield(variable,'aods')
-aods = variable.aods;
-outp.aods = aods;
+    aods = variable.aods;
+    outp.aods = aods;
 end
 if isfield(variable,'cods')
-cods = variable.cods;
-outp.cods = cods;
+    cods = variable.cods;
+    outp.cods = cods;
 end
 if isfield(variable,'assas')
-assas = variable.assas;
-outp.assas = assas;
+    assas = variable.assas;
+    outp.assas = assas;
 end
-if isfield(variable,'cssas')    
-cssas = variable.cssas;
-outp.cssas = cssas;
+if isfield(variable,'cssas')
+    cssas = variable.cssas;
+    outp.cssas = cssas;
 end
 
 outp.aod_jac = zeros(outp.nw,1);
