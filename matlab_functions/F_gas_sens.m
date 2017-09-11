@@ -21,6 +21,8 @@ else
     included_gases = all_gases;
 end
 
+gasnorm = ones(length(included_gases),1);
+
 for i = 1:length(included_gases)
     new = '    ';
     new(1:length(included_gases{i})) = included_gases{i};
@@ -92,6 +94,7 @@ rad = [];
 nz = outp_d(1).nz;
 gascol = zeros(nz,ngas);
 gastcol = zeros(ngas,1);
+% number of albedo terms for all windows
 nalb_all = 0;
 for iwin = 1:length(outp_d);
     nalb_all = nalb_all+outp_d(iwin).nalb;
@@ -108,6 +111,7 @@ for iwin = 1:length(outp_d)
     for ig = 1:ngas
         for igc = 1:outp_d(iwin).ngas
             if strcmp(included_gases{ig},outp_d(iwin).gases{igc}(1:length(included_gases{ig})))
+                gasnorm(ig) = outp_d(iwin).gasnorm(igc);
                 gascol(:,ig) = outp_d(iwin).gascol(:,igc);
                 gastcol(ig) = outp_d(iwin).gastcol(igc);
                 tmp_col_jac(:,ig) = outp_d(iwin).gascol_jac(:,igc);
@@ -150,6 +154,9 @@ for iwin = 1:length(outp_d)
 end
 outp.rad = rad;
 outp.wsnr = wsnr;
+outp.gasnorm = gasnorm;
+outp.gascol = gascol;
+outp.gastcol = gastcol;
 
 % set up state vectors, and a priori error
 nv = 1;% note the difference indexing between matlab and idl
@@ -167,6 +174,7 @@ gasprof_aperr_scale(outp_d(1).zmid <= 2) = inp.gasprof_aperr_scale_LT;
 gasprof_aperr_scale(outp_d(1).zmid > 2 & outp_d(1).zmid <= 17) = inp.gasprof_aperr_scale_UT;
 gasprof_aperr_scale(outp_d(1).zmid > 17) = inp.gasprof_aperr_scale_ST;
 gasprof_aperr = gascol.*repmat(gasprof_aperr_scale,[1,ngas]);
+outp.gasprof_aperr = gasprof_aperr;
 
 albs_aperr = inp.albs_aperr; 
 t_aperr = inp.t_aperr; 
@@ -370,4 +378,13 @@ outp.cfracidx = cfracidx;
 outp.sfcprsidx = sfcprsidx;
 
 outp.gascoljac = gascoljac;
+outp.inc_prof = inc_prof;
+outp.included_gases = included_gases;
 
+outp.nz = outp_d(1).nz;
+outp.aircol = outp_d(1).aircol;
+outp.ps = outp_d(1).ps;
+outp.ts = outp_d(1).ts;
+outp.zs = outp_d(1).zs;
+outp.zmid = outp_d(1).zmid;
+outp.tmid = outp_d(1).tmid;

@@ -7,10 +7,17 @@ function outp = F_degrade_gc_output(inp)
 
 outp = struct;
 nwin = inp.nwin; wmins = inp.wmins; wmaxs = inp.wmaxs;
+if ~isfield(inp,'fwhm')
+    inp.fwhm  = nan(nwin,1);
+    for iwin = 1:nwin
+        inp.fwhm(iwin) = (inp.wmaxs(iwin)-inp.wmins(iwin))/inp.npixel(iwin)*inp.nsamp(iwin);
+    end
+end
 fwhm = inp.fwhm; nsamp = inp.nsamp;
 nalb = inp.nalb;
-snr = inp.snr;
+snre = inp.snre;
 snrdefine_rad = inp.snrdefine_rad;
+snrdefine_dlambda = inp.snrdefine_dlambda;
 if isfield(inp,'gc_fwhm');
     gc_fwhm = inp.gc_fwhm;
 else
@@ -46,8 +53,8 @@ for iwin = 1:nwin
         end
     end
     outp(iwin).nw = length(outp(iwin).wave);
-%     outp(iwin).gases = gc_output.gases;
-%     outp(iwin).gasnorm = gc_output.gasnorm;
+    %     outp(iwin).gases = gc_output.gases;
+    %     outp(iwin).gasnorm = gc_output.gasnorm;
 end
 % derive albedo polynomial jacs
 fidxs = zeros(nwin,1); lidxs = fidxs;
@@ -70,7 +77,9 @@ for iwin = 1:nwin
     %     mnrads(iwin) = mean(rad);
     fidx = lidx+1;
     % Assign SNR to measured radiance
-    outp(iwin).wsnr = snr(iwin) * sqrt(outp(iwin).rad / snrdefine_rad(iwin));
+    outp(iwin).wsnr = snre(iwin) * ...
+        sqrt(outp(iwin).rad / snrdefine_rad(iwin) * ...
+        fwhm(iwin)/nsamp(iwin) / snrdefine_dlambda(iwin));
     outp(iwin).nalb = nalb(iwin);
 end
 return
