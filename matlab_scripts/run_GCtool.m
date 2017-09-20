@@ -1,5 +1,9 @@
 % Main program to run the GCtool for all possible spectral ranges
 % Written by Kang Sun on 2017/08/31
+
+% Abandoned on 2017/9/20, because matlab command "unix()" sometimes cannot
+% run unix command when aerosol is on, possibly due to memory issue.
+% However the command runs fine at terminals. not understood.
 clc
 clear
 %% common data for all windows

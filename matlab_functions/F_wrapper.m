@@ -16,6 +16,10 @@ end
 % call function to subset and convolve gc output
 outp_d = F_degrade_gc_output(inp);
 
+if ~isfield(inp,'if_plot_overview')
+    inp.if_plot_overview = true;
+end
+if inp.if_plot_overview
 % plot radiance, irradiance, and snr in the retrieval windows
 outp.fig_overview = figure('unit','inch','position',[0 1 10 5],'color','w','visible','off');
 nrow = 4;
@@ -49,7 +53,7 @@ for i = 1:2
     title(['SNR_e = ',num2str(inp.snre(i))])
     
 end
-
+end
 % call function to concatenate all windows and perform linear retrieval
 outp_s = F_gas_sens(inp,outp_d);
 
