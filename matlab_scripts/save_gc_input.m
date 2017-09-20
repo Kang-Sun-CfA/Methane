@@ -77,7 +77,7 @@ windowlist(8).vEnd = 2400;
 windowlist(8).gas_cell = {'CH4','H2O','N2O','CO'};
 %% loops
 frun = fopen('run.sh','w');
-
+fprintf(frun,'#bin!sh\n');
 for iangle = 1:1%length(SZA_array)
     SZA = SZA_array(iangle);
     VZA = VZA_array(iangle);
