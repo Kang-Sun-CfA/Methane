@@ -93,6 +93,7 @@ for iangle = 1:1%length(SZA_array)
             inp.gas_cell = windowlist(iwin).gas_cell;
             inp.dv_calc = 0.01;
             inp.fn_extra = ReflName;
+            inp.ReflSpectra = ReflSpectra;
             outp = F_write_GCtool_input(inp);
             run_str = ['./geocape_tool.exe ',outp.fnout];
             fprintf(frun,'%s',run_str);

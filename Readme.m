@@ -1,4 +1,4 @@
-% Matlab script to run sensitivity study
+% Matlab script template to run sensitivity study
 % Written by Kang Sun on 2017/09/11
 clc
 clear
@@ -9,7 +9,7 @@ sfs = filesep;
 if ispc
     % Kang's old thinkpad
     % where gc output is
-    data_dir =  'd:\Research_CfA\CH4sat\';
+    data_dir =  'd:\Research_CfA\CH4sat\outp\';
     % source code containing matlab functions
     git_dir = 'c:\Users\Kang Sun\Documents\GitHub\Methane\';
     % matlab plotting function export_fig
@@ -35,22 +35,47 @@ addpath([git_dir,sfs,'matlab_functions',sfs])
 addpath(plot_function_dir)
 cd(data_dir)
 
+% viewing geometry scenarios
+SZA_array = [70 45];% in degree
+VZA_array = [45 30];
+
+% surface albedo scenarios
+ReflSpectra_array = {'conifer_ASTER.dat','sand_ASTER.dat','tapwater_ASTER_smooth.dat'};
+ReflName_array = {'conifer','sand','tapwater'};
+
+% select/loop scenarios
+iRefl = 1;
+iangle = 1;
+
+SZA = SZA_array(iangle);
+VZA = VZA_array(iangle);
+
+ReflName = ReflName_array{iRefl};
+
 % merge gc outputs, the outputs need to have the same resolution, and the
 % sampling intervals have to be aligned
-inp.fn1 = 'O2_670-720_0.01_70_45_test_GC_upwelling_output.nc';
-inp.fn2 = 'O2_700-780_0.01_70_45_test_GC_upwelling_output.nc';
+inp.fn1 = ['O2_670-720_0.01_',num2str(SZA),'_',num2str(VZA),...
+    '_',ReflName,'GC_upwelling_output.nc'];
+inp.fn2 = ['O2_700-780_0.01_',num2str(SZA),'_',num2str(VZA),...
+    '_',ReflName,'GC_upwelling_output.nc'];
 outp_O2_1 = F_merge_gc_output(inp);
 
-inp.fn1 = 'O2_1240-1320_0.01_70_45_test_GC_upwelling_output.nc';
-inp.fn2 = 'O2_1310-1400_0.01_70_45_test_GC_upwelling_output.nc';
+inp.fn1 = ['O2_1240-1320_0.01_',num2str(SZA),'_',num2str(VZA),...
+    '_',ReflName,'GC_upwelling_output.nc'];
+inp.fn2 = ['O2_1310-1400_0.01_',num2str(SZA),'_',num2str(VZA),...
+    '_',ReflName,'GC_upwelling_output.nc'];
 outp_O2_2 = F_merge_gc_output(inp);
 
-inp.fn1 = 'CH4_1550-1640_0.01_70_45_test_GC_upwelling_output.nc';
-inp.fn2 = 'CH4_1630-1720_0.01_70_45_test_GC_upwelling_output.nc';
+inp.fn1 = ['CH4_1550-1640_0.01_',num2str(SZA),'_',num2str(VZA),...
+    '_',ReflName,'GC_upwelling_output.nc'];
+inp.fn2 = ['CH4_1630-1720_0.01_',num2str(SZA),'_',num2str(VZA),...
+    '_',ReflName,'GC_upwelling_output.nc'];
 outp_CH4_1 = F_merge_gc_output(inp);
 
-inp.fn1 = 'CH4_2230-2320_0.01_70_45_test_GC_upwelling_output.nc';
-inp.fn2 = 'CH4_2310-2400_0.01_70_45_test_GC_upwelling_output.nc';
+inp.fn1 = ['CH4_2230-2320_0.01_',num2str(SZA),'_',num2str(VZA),...
+    '_',ReflName,'GC_upwelling_output.nc'];
+inp.fn2 = ['CH4_2310-2400_0.01_',num2str(SZA),'_',num2str(VZA),...
+    '_',ReflName,'GC_upwelling_output.nc'];
 outp_CH4_2 = F_merge_gc_output(inp);
 %%
 clc
@@ -132,7 +157,7 @@ for icase = 1:ncase
     inp.inc_prof = false(length(inp.included_gases),1);
     inp.inc_prof(1) = true;% only retrieve CH4 profiles
     outp{icase} = F_wrapper(inp);
-    figure(outp{icase}.fig_jac)
+    figure(outp{icase}.fig_overview)
     % you may not run this line without writing permit
 %     export_fig([plot_save_dir,casenames{icase},'_jac.pdf'])
 %     close
