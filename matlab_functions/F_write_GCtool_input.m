@@ -3,6 +3,7 @@ function outp = F_write_GCtool_input(inp)
 
 % Written by Kang Sun 2017/09/05
 % add the option to change input profiles on 2017/10/11
+sfs = filesep;
 
 if isfield(inp,'SZA')
     SZA = inp.SZA;
@@ -58,11 +59,13 @@ if isfield(inp,'fn_extra')
 else
     fn_extra = 'test';
 end
-fn_pre = ['./outp/',gas_cell{1},'_',sprintf('%.0f',vStart),'-',sprintf('%.0f',vEnd),...
+fn_pre = ['.',sfs,'outp',sfs,gas_cell{1},'_',sprintf('%.0f',vStart),'-',sprintf('%.0f',vEnd),...
     '_',sprintf('%.2f',dv_calc),'_',sprintf('%.0f',SZA),'_',sprintf('%.0f',VZA),'_',fn_extra];
 
 fnin = 'input_template.gc';
-fnout = ['./inp/input_',fn_pre,'.gc'];
+fnout = ['.',sfs,'inp',sfs,'input_',gas_cell{1},'_',sprintf('%.0f',vStart),'-',sprintf('%.0f',vEnd),...
+    '_',sprintf('%.2f',dv_calc),'_',sprintf('%.0f',SZA),'_',sprintf('%.0f',VZA),'_',fn_extra,'.gc'];
+
 fout = fopen(fnout,'w');
 fin = fopen(fnin,'r');
 
