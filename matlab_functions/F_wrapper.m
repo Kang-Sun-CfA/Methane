@@ -13,6 +13,13 @@ if ~isfield(inp,'fwhm')
     end
 end
 
+if ~isfield(inp,'npixel')
+    inp.npixel = nan(inp.nwin,1);
+    for iwin = 1:inp.nwin
+        inp.npixel(iwin) = round((inp.wmaxs(iwin)-inp.wmins(iwin))/(inp.fwhm(iwin)/inp.nsamp(iwin)));
+    end
+end
+
 % call function to subset and convolve gc output
 outp_d = F_degrade_gc_output(inp);
 
@@ -23,26 +30,26 @@ if inp.if_plot_overview
 % plot radiance, irradiance, and snr in the retrieval windows
 outp.fig_overview = figure('unit','inch','position',[0 1 10 5],'color','w','visible','off');
 nrow = 4;
-for i = 1:2
+for i = 1:inp.nwin
     subplot(nrow,length(outp_d),i)
     plot(outp_d(i).wave,outp_d(i).rad,'linewidth',1,'color','k')
     set(gca,'linewidth',1,'xcolor','w','box','off','xlim',[min(outp_d(i).wave),max(outp_d(i).wave)])
     ylabel('Rradiance, I')
     title([num2str(inp.npixel(i)),'-pixel, FWHM = ',num2str(inp.fwhm(i),2),', d\lambda = ',num2str(inp.fwhm(i)/inp.nsamp(i),2)])
     
-    subplot(nrow,length(outp_d),i+2)
+    subplot(nrow,length(outp_d),i+inp.nwin*1)
     plot(outp_d(i).wave,outp_d(i).irrad,'linewidth',1,'color','k')
     set(gca,'linewidth',1,'xcolor','w','box','off','xlim',[min(outp_d(i).wave),max(outp_d(i).wave)])
     ylabel('Irradiance, F')
     title(['Spectral range: ',num2str(inp.wmins(i),'%.0f'),'-',num2str(inp.wmaxs(i),'%.0f'),' nm'])
     
-    subplot(nrow,length(outp_d),i+4)
+    subplot(nrow,length(outp_d),i+inp.nwin*2)
     plot(outp_d(i).wave,outp_d(i).rad./outp_d(i).irrad,'linewidth',1,'color','k')
     set(gca,'linewidth',1,'xcolor','w','box','off','xlim',[min(outp_d(i).wave),max(outp_d(i).wave)])
     ylabel('Normailzed radiance, I/F')
     title(['Mean albedo = ',num2str(mean(outp_d(i).surfalb))])
     
-    subplot(nrow,length(outp_d),i+6)
+    subplot(nrow,length(outp_d),i+inp.nwin*3)
     plot(outp_d(i).wave,outp_d(i).wsnr,'linewidth',1,'color','k')
     set(gca,'linewidth',1,'box','off','xlim',[min(outp_d(i).wave),max(outp_d(i).wave)])
 %     Xtick = get(gca,'xtick');

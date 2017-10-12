@@ -52,6 +52,11 @@ if isfield(inp,'inc_aod')
 else
     inc_aod = 0;
 end
+if isfield(inp,'inc_aod')
+    inc_aods = inp.inc_aods;
+else
+    inc_aods = 0;
+end
 if isfield(inp,'inc_assa')
     inc_assa = inp.inc_assa;
 else
@@ -83,6 +88,7 @@ gascoljac = [];
 albjac = []; 
 tjac = []; 
 aodjac = []; 
+aodsjac = [];
 assajac = []; 
 codjac = []; 
 cssajac = []; 
@@ -142,6 +148,9 @@ for iwin = 1:length(outp_d)
     if inc_aod
         aodjac = cat(1,aodjac,outp_d(iwin).aod_jac);
     end
+    if inc_aods
+        aodsjac = cat(1,aodsjac,outp_d(iwin).aods_jac);
+    end
     if inc_assa
         assajac = cat(1,assajac,outp_d(iwin).assa_jac);
     end
@@ -179,6 +188,11 @@ outp.gasprof_aperr = gasprof_aperr;
 albs_aperr = inp.albs_aperr; 
 t_aperr = inp.t_aperr; 
 aod_aperr = inp.aod_aperr;
+if isfield(inp,'aods_aperr')
+    aods_aperr = inp.aods_aperr;
+else
+    aods_aperr = ones(outp_d.nz,1)*0.5;
+end
 assa_aperr = inp.assa_aperr;
 cod_aperr = inp.cod_aperr;
 cssa_aperr = inp.cssa_aperr;
@@ -222,7 +236,7 @@ if inc_alb
     alb_idx_2 = nv-1;
 end
 % Add other terms
-tidx = -1 ; aodidx = -1 ; assaidx = -1 ;
+tidx = -1 ; aodidx = -1 ; aodsidx = -1; assaidx = -1 ;
 codidx = -1 ; cssaidx = -1 ; cfracidx = -1 ; sfcprsidx = -1;
 if inc_t 
     varnames = cat(1,varnames,'T');
@@ -236,6 +250,17 @@ if inc_aod
     aperrs = cat(1,aperrs,aod_aperr);
     aodidx = nv;
     nv = nv + 1;  
+end
+
+if inc_aods  
+    tempcell = cell(nz,1);
+    for icell = 1:nz
+        tempcell{icell} = ['aod_',num2str(icell)];
+    end
+    varnames = cat(1,varnames,tempcell);
+    aperrs = cat(1,aperrs,aods_aperr(:));
+    aodsidx = nv;
+    nv = nv + nz;
 end
 
 if inc_assa 
@@ -328,6 +353,10 @@ if aodidx > 0
     ywf(:,aodidx) = aodjac;
 end
 
+if aodsidx > 0
+    ywf(:,aodsidx:aodsidx+nz-1) = aodsjac;
+end
+
 if assaidx > 0
     ywf(:,assaidx) = assajac;
 end
@@ -371,6 +400,7 @@ outp.gasfidxs = gasfidxs;
 outp.alb_idx_1 = alb_idx_1; outp.alb_idx_2 = alb_idx_2;
 outp.tidx = tidx;
 outp.aodidx = aodidx;
+outp.aodsidx = aodsidx;
 outp.assaidx = assaidx;
 outp.codidx = codidx;
 outp.cssaidx = cssaidx;

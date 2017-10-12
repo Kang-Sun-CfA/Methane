@@ -153,6 +153,7 @@ if isfield(variable,'cssas')
 end
 
 outp.aod_jac = zeros(outp.nw,1);
+outp.aods_jac = zeros(outp.nw,outp.nz);
 outp.assa_jac = zeros(outp.nw,1);
 outp.cod_jac = zeros(outp.nw,1);
 outp.cssa_jac = zeros(outp.nw,1);
@@ -169,9 +170,11 @@ if do_aod_jacobian > 0 && aod0 > 0
         if aods0(i) > 0
             aod_jac = aod_jac+variable.aod_jac(:,i);
         end
+        outp.aods_jac(:,i) = variable.aod_jac(:,i)./rad./aods(:,i);
     end
     aod_jac = aod_jac./rad./aod0;
     outp.aod_jac = aod_jac;
+    
 end
 
 waer = zeros(outp.nw,1);
