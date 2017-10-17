@@ -8,6 +8,8 @@ function outp = F_gas_sens(inp,outp_d)
 % Rewritten by Kang Sun on 2017/09/06. The input now contains outp_d, the
 % merged, degraded gc tool outputs, to make it work for multiple windows
 
+% Updated on 2017/10/12 to enable multiple gas profiles
+
 outp = struct;
 all_gases = {};
 for iwin = 1:length(outp_d)
@@ -33,6 +35,10 @@ end
 
 if isfield(inp,'inc_prof')
     inc_prof = inp.inc_prof;
+    nprof = sum(inc_prof);
+    if length(inp.gasprof_aperr_scale_LT) < nprof
+        error('Please specify prior error for ALL gas profiles!')
+    end
 else
     inc_prof = zeros(1,length(all_gases));
 end
@@ -178,11 +184,22 @@ gasnvar  = zeros(ngas,1);
 % construct gases a priori
 gascol_aperr = inp.gascol_aperr_scale*gastcol; 
 
-gasprof_aperr_scale = zeros(outp_d(1).nz,1); 
-gasprof_aperr_scale(outp_d(1).zmid <= 2) = inp.gasprof_aperr_scale_LT;
-gasprof_aperr_scale(outp_d(1).zmid > 2 & outp_d(1).zmid <= 17) = inp.gasprof_aperr_scale_UT;
-gasprof_aperr_scale(outp_d(1).zmid > 17) = inp.gasprof_aperr_scale_ST;
-gasprof_aperr = gascol.*repmat(gasprof_aperr_scale,[1,ngas]);
+gasprof_aperr_scale = zeros(outp_d(1).nz,nprof); 
+for iprof = 1:nprof
+gasprof_aperr_scale(outp_d(1).zmid <= 2,iprof) = inp.gasprof_aperr_scale_LT(iprof);
+gasprof_aperr_scale(outp_d(1).zmid > 2 & outp_d(1).zmid <= 17,iprof) = inp.gasprof_aperr_scale_UT(iprof);
+gasprof_aperr_scale(outp_d(1).zmid > 17,iprof) = inp.gasprof_aperr_scale_ST(iprof);
+end
+
+gasprof_aperr = gascol;
+iprof = 0;
+for ig = 1:ngas
+    if inc_prof(ig)
+        iprof = iprof+1;
+        gasprof_aperr(:,ig) = gascol(:,ig).*gasprof_aperr_scale(:,iprof);
+    end
+end
+% gasprof_aperr = gascol.*repmat(gasprof_aperr_scale,[1,ngas]);
 outp.gasprof_aperr = gasprof_aperr;
 
 albs_aperr = inp.albs_aperr; 

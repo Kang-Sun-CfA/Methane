@@ -64,6 +64,7 @@ end
 % call function to concatenate all windows and perform linear retrieval
 outp_s = F_gas_sens(inp,outp_d);
 
+if inp.if_plot_overview
 % plot all weighting functions (jacobians)
 outp.fig_jac = figure('unit','inch','position',[0 0 10 10],'color','w','visible','off');
 xx = 1:outp_s.ny;
@@ -80,6 +81,8 @@ set(gca,'ylim',Ylim,'ytick',1:outp_s.nv,'yticklabel',outp_s.varnames,'xlim',[min
 xlabel('Spectral index')
 ylabel('State vector index')
 hold off
+
+end
 
 % extract information from outp_s, the output of linear retrieval
 ngas = length(outp_s.included_gases);
@@ -113,7 +116,7 @@ for ig = 1:ngas
 end
 % performance of profile retrievals
 nprof = sum(inc_prof(1:ngas));
-prof_dofs = nan(nprof);
+prof_dofs = nan(nprof,1);
 prof_ak = nan(nz,nz,nprof);
 % prof_ap = nan(nz,nprof);
 prof_aperr = nan(nz,nprof);
@@ -130,6 +133,12 @@ if nprof > 0
             prof_aperr(:,iprof) = sqrt(diag(sa(mat_interval,mat_interval)))./gascol(:,ig);
         end
     end
+end
+if isfield(outp_s,'aodsidx')
+aidx1 = outp_s.aodsidx;
+aidx2 = outp_s.aodsidx+outp_s.nz-1;
+outp.aods_ak = outp_s.ak(aidx1:aidx2,aidx1:aidx2);
+outp.aods_se = outp_s.se(aidx1:aidx2,aidx1:aidx2);
 end
 outp.outp_s = outp_s;
 outp.vcd_error = vcd_error;
