@@ -58,7 +58,7 @@ if isfield(inp,'inc_aod')
 else
     inc_aod = 0;
 end
-if isfield(inp,'inc_aod')
+if isfield(inp,'inc_aod') && isfield(inp,'inc_aods')
     inc_aods = inp.inc_aods;
 else
     inc_aods = 0;

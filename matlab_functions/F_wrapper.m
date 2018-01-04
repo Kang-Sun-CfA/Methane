@@ -134,11 +134,13 @@ if nprof > 0
         end
     end
 end
-if isfield(outp_s,'aodsidx')
-aidx1 = outp_s.aodsidx;
-aidx2 = outp_s.aodsidx+outp_s.nz-1;
-outp.aods_ak = outp_s.ak(aidx1:aidx2,aidx1:aidx2);
-outp.aods_se = outp_s.se(aidx1:aidx2,aidx1:aidx2);
+if isfield(outp_s,'aodsidx') && isfield(inp,'inc_aods')
+    if inp.inc_aods
+        aidx1 = outp_s.aodsidx;
+        aidx2 = outp_s.aodsidx+outp_s.nz-1;
+        outp.aods_ak = outp_s.ak(aidx1:aidx2,aidx1:aidx2);
+        outp.aods_se = outp_s.se(aidx1:aidx2,aidx1:aidx2);
+    end
 end
 outp.outp_s = outp_s;
 outp.vcd_error = vcd_error;
