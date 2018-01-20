@@ -75,7 +75,7 @@ N = MR*local_P*100/kB/local_T/1e6;
 % Doppler HWHM at this layer
 GammaD = (v0/c).*sqrt(2*kB*Na*local_T*log(2)./MW);
 % line strength at this layer
-if ~if_adjust_S
+if ~if_adjust_Q
     qqT0 = Q(T0,'O2',1);
     qqT = Q(local_T,'O2',1);
 else
