@@ -30,8 +30,8 @@ topn = 12;
 % radius of the earth, km
 Re = 6371;
 % loop through scans for this orbit
-parfor i = 1:30
-%for i = 17
+%parfor i = 1:30
+for i = 1
     disp(['Working on scan ',num2str(i),'...'])
     wv = scia_data(i).data(:,1);
     spec = scia_data(i).data(:,2:end);
