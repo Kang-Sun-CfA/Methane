@@ -119,8 +119,8 @@ parfor i = 1:nscan
     % onion peeling
     for ith = topn:-1:1
         TH = TH_array(ith);
-        TH_store(ith) = TH;
-        zlayer_store(ith) = z_layer(ith);
+%         TH_store(ith) = TH;
+%         zlayer_store(ith) = z_layer(ith);
         tmpspec = spec(:,ith);
         LL = L(ith,ith:topn);
         
@@ -173,8 +173,8 @@ parfor i = 1:nscan
     savestruct.n1De = n1De_store;
     savestruct.T = T_store;
     savestruct.Te = Te_store;
-    savestruct.TH = TH_store;
-    savestruct.zlayer = zlayer_store;
+    savestruct.TH = TH_array(topn:-1:1);
+    savestruct.zlayer = z_layer(topn:-1:1);
     savestruct.A1D = inp.A1D;
     savestruct.lat_scan = lat_array(1:topn);
     savestruct.lon_scan = lon_array(1:topn);
