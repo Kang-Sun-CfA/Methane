@@ -32,7 +32,7 @@ else
 addpath('~/CH4/Methane/matlab_functions/')
 addpath('~/FTS/Realtime_FTS/matlab_script/')
 lines = F_import_par('~/CH4/airglow/O2.par.html');
-load('~/CH4/airglow/Ch6orb41467_9819-20100203_231737W-1c.mat','scia_data')    
+load('~/CH4/airglow/Ch4orb44801_0000-20100924_211353Y-1c.mat','scia_data')    
 end
 wStart = 1235; wEnd = 1300;step = 0.001;
 w1 = wStart:step:wEnd;
