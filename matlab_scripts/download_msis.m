@@ -16,4 +16,4 @@ rstr = ['wget --post-data "model=msis&year=2010&month=09&day=24&time_flag=0&hour
 unix(rstr)
 end
 
-unix('tar -vf $transfer/msis.tar msis*.txt; rm msis*.txt')
+unix('tar -cvf $transfer/msis.tar msis*.txt; rm msis*.txt')
