@@ -178,7 +178,7 @@ parfor i = 1:nscan
     savestruct.A1D = inp.A1D;
     savestruct.lat_scan = lat_array(1:topn);
     savestruct.lon_scan = lon_array(1:topn);
-    savestruct.sza_scan = sza_array(1:topn);
+    savestruct.sza_scan = SZA_array(1:topn);
     a{i} = savestruct;
 end
 if ~ispc
