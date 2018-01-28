@@ -138,6 +138,7 @@ parfor i = 1:nscan
         s2 = double(spec(wv > 1237 & wv < 1298,ith));
         s2 = s2(:);
         coeff0 = double([log10(max(s2)/100) 0 1.46 log10(260)]);
+        inp.Tscale = 'log';
         inp.LL = LL;
         if length(LL) >= 2
             inp.absco_up = absco_store(:,end-(length(LL)-2):end);
@@ -146,6 +147,12 @@ parfor i = 1:nscan
         inp.output_struct = false;
         try
         [coeff, R, ~,CovB] = nlinfit(inp,s2,@F_fit_absorbed_airglow,coeff0);
+        if coeff(4) > 320
+            disp('Too hot! try linear T')
+            inp.Tscale = 'linear';
+            coeff0 = double([log10(max(s2)/100) 0 1.46 260]);
+            [coeff, R, ~,CovB] = nlinfit(inp,s2,@F_fit_absorbed_airglow,coeff0);
+        end
         catch
             warning(['Fitting failed at Scan ',num2str(i),', TH = ',num2str(TH,3),' km'])
             break
@@ -159,8 +166,13 @@ parfor i = 1:nscan
         nO2_store(ith) = s2_struct.nO2;
         n1D_store(ith) = 10^coeff(1);
         n1De_store(ith) = sqrt(CovB(1,1));
+        if strcmp(inp.Tscale,'log')
         T_store(ith) = 10^coeff(4);
+        Te_store(ith) = 10^sqrt(CovB(4,4));
+        else
+            T_store(ith) = coeff(4);
         Te_store(ith) = sqrt(CovB(4,4));
+        end
 %         plot(s2_struct.local_ver)
 %        4*pi*trapz(wv(~isnan(tmpspec)),tmpspec(~isnan(tmpspec)))/LL; 
     end

@@ -24,7 +24,11 @@ if FWHM <= 1
 end
 if ~isfield(inp,'T')
     count = count+1;
+    if strcmp(inp.Tscale,'log')
     inp.T = 10^coeff(count);
+    else
+        inp.T = coeff(count);
+    end
 end
 
 % force the convolution to be off within F_O21D_hitran
