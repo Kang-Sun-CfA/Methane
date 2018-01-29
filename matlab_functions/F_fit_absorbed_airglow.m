@@ -42,9 +42,12 @@ w1 = outp.wgrid;
 s1 = outp.xsec;
 % ver spectrum in photons/s/cm3/nm
 ver_spec = s1/sum(s1)/mean(diff(w1))*10^coeff(1)*inp.A1D;
-% simulate absorption spectrum
+% simulate absorption spectrum, use fixed temperature
 inp.if_adjust_S = false;
+tmpT = inp.T;
+inp.T = inp.guessT;
 outp = F_O21D_hitran(inp);
+inp.T = tmpT;
 
 LL = inp.LL;
 % local optical depth

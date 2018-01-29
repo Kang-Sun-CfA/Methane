@@ -129,6 +129,7 @@ parfor i = 1:nscan
         inp.common_grid = v1;
         inp.A1D = 2e-4;
         guessT = interp1(Z_airglow,T_airglow,TH);
+        inp.guessT = guessT;
         % inp.T = guessT;
         inp.P = interp1(Z_airglow,P_airglow,TH);
         % inp.FWHM = 1.46;
