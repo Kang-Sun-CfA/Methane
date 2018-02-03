@@ -7,7 +7,7 @@ Z_airglow = inp.Z_airglow;
 P_airglow = inp.P_airglow;
 T_airglow = inp.T_airglow;
 dZ_airglow = diff(Z_airglow);
-dZ_airglow = [dZ_airglow(:);dZ_airglow(end)];
+dZ_airglow = abs([dZ_airglow(:);dZ_airglow(end)]);
 if_adjust_S = inp.if_adjust_S;
 lines = inp.lines;
 common_grid = inp.common_grid;
@@ -44,7 +44,7 @@ for ilayer = 1:nlayer
     inph.fwhm = 0;
     inph.common_grid = common_grid;
     outp = F_O21D_hitran(inph);
-    airglow_local = outp.xsec/trapz(1e7./common_grid,outp.xsec)*VER_airglow(ilayer);
+    airglow_local = outp.xsec/abs(trapz(1e7./common_grid,outp.xsec))*VER_airglow(ilayer);
     airglow_local = airglow_local(:)';
     airglow_spec = airglow_spec+...
         airglow_local*dZ_airglow(ilayer)*AMF*100*1000/4/pi ...
