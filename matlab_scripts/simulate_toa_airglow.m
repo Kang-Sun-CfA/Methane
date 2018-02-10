@@ -27,9 +27,9 @@ inp.VZA = 0;
 inp.vStep = 0.0005;
 inp.vStart = 1240;
 inp.vEnd = 1295;
-useairglow_profile = 1:2:length(Z_airglow);
+useairglow_profile = 1:3:length(Z_airglow);
 inp.Z_airglow = Z_airglow(useairglow_profile);
-inp.VER_airglow = VER_airglow(useairglow_profile);
+inp.VER_airglow = VER_airglow(useairglow_profile)/2;
 inp.T_airglow = T_airglow(useairglow_profile);
 inp.P_airglow = P_airglow(useairglow_profile);
 inp.llwaven = llwaven;
@@ -82,10 +82,10 @@ coeff0 = [outp.amf outp.amf outp.amf 1 0 1];
 snre_vec = [50:50:500];
 nsnre = length(snre_vec);
 
-dlambda_vec = [0.01 0.02 0.025 0.035 0.05 0.06 0.075 0.09 0.1];
+dlambda_vec = 0.01:0.01:0.1;%[0.01 0.02 0.025 0.035 0.05 0.06 0.075 0.09 0.1];
 ndlambda = length(dlambda_vec);
 
-realizeN = 100;
+realizeN = 250;
 %% know-everything fitting
 c1 = nan(length(coeff0),realizeN,nsnre,ndlambda);
 
@@ -166,6 +166,57 @@ for idlambda = 1:ndlambda
     end
 end
 save('c2.mat','c2','dlambda_vec','snre_vec','ndlambda','nsnre')
+%% gravity wave fitting
+c4 = nan(length(coeff0),realizeN,nsnre,ndlambda);
+
+for idlambda = 1:ndlambda
+    inp.dlambda = dlambda_vec(idlambda);
+    
+    for isnr = 1:nsnre
+        inp.snre = snre_vec(isnr);
+        inp.snrdefine_rad = 6e11;
+        inp.snrdefine_dlambda = 0.1;
+        if isfield(inp,'s1')
+            inp = rmfield(inp,'s1');
+        end
+        if isfield(inp,'w1')
+            inp = rmfield(inp,'w1');
+        end
+        if isfield(inp,'airglow_spectrum')
+            inp = rmfield(inp,'airglow_spectrum');
+        end
+        
+        tmp_coeff = nan(length(coeff0),realizeN);
+        
+        parfor irealize = 1:realizeN
+            inpsimlocal = inp;
+            inpsimlocal.T_airglow = ...
+                inpsimlocal.T_airglow+...
+                randn(size(inpsimlocal.T_airglow)).*T_airglowe(useairglow_profile);
+            inp_fit_local = inp_fit;
+            outp_fit = F_ro_simulator(inpsimlocal);
+            % Weight = outp.noise_std(outp.w2 >= wStart & outp.w2 <= wEnd);
+            w2 = double(outp_fit.w2(outp_fit.w2 >= wStart & outp_fit.w2 <= wEnd));
+            s2 = double(outp_fit.s2(outp_fit.w2 >= wStart & outp_fit.w2 <= wEnd));
+            % Weight = Weight/sum(Weight);
+            inp_fit_local.scalef = mean(s2);
+            s2 = s2/inp_fit_local.scalef;
+            inp_fit_local.fwhm = inp.dlambda*3;
+            
+            inp_fit_local.if_fit_airglow = true;
+            
+            inp_fit_local.w2 = w2;
+            inp_fit_local.s2 = double(s2);
+            coeff = nlinfit(inp_fit_local,s2,@F_airglow_retrieval,coeff0);%,'weight',Weight);
+            tmp_coeff(:,irealize) = coeff;
+        end
+        c4(:,:,isnr,idlambda) = tmp_coeff;
+        nowst = datestr(now);
+        disp(['SNR = ',num2str(snre_vec(isnr)),', dl = ',num2str(dlambda_vec(idlambda)),' finshed at ',nowst])
+    end
+end
+save('c4.mat','c4','dlambda_vec','snre_vec','ndlambda','nsnre')
+
 %% wrong-airglow fitting
 c3 = nan(length(coeff0),realizeN,nsnre,ndlambda);
 inp_fit.sa = sa_wrong;
@@ -206,6 +257,11 @@ for idlambda = 1:ndlambda
     end
 end
 save('c3.mat','c3','dlambda_vec','snre_vec','ndlambda','nsnre')
+%%
+% plot(T_airglow(useairglow_profile),Z_airglow(useairglow_profile),...
+%     T_airglow(useairglow_profile)+...
+%     randn(size(T_airglow(useairglow_profile))).*T_airglowe(useairglow_profile),...
+%     Z_airglow(useairglow_profile),'o')
 %%
 % o2_std = nan(nsnre,ndlambda,1);
 % for idlambda = 1:ndlambda

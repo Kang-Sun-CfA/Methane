@@ -12,7 +12,7 @@ for i = 1:30
     end
     lon = num2str(lon_scan(i),'%.2f');
     txt_name = ['msis_',num2str(i),'.txt'];
-rstr = ['wget --post-data "model=msis&year=2010&month=09&day=24&time_flag=0&hour=1.5&geo_flag=0.&latitude=',lat,'&longitude=',lon,'&height=100.&profile=1&start=20.&stop=100.&step=1.&f10_7=&f10_7_3=&ap=&format=0&vars=05&vars=012&vars=013&linestyle=solid&charsize=&symbol=2&symsize=&yscale=Linear&xscale=Linear&imagex=640&imagey=480" https://omniweb.sci.gsfc.nasa.gov/cgi/vitmo/vitmo_model.cgi -O ',txt_name];
+rstr = ['wget --post-data "model=msis&year=2010&month=09&day=24&time_flag=0&hour=1.5&geo_flag=0.&latitude=',lat,'&longitude=',lon,'&height=100.&profile=1&start=20.&stop=100.&step=1.&f10_7=&f10_7_3=&ap=&format=0&vars=05&vars=012&vars=011&linestyle=solid&charsize=&symbol=2&symsize=&yscale=Linear&xscale=Linear&imagex=640&imagey=480" https://omniweb.sci.gsfc.nasa.gov/cgi/vitmo/vitmo_model.cgi -O ',txt_name];
 unix(rstr)
 end
 
