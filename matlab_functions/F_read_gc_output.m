@@ -3,6 +3,21 @@ function outp = F_read_gc_output(inp)
 % Xiong Liu's IDL code. Follow the same naming standard
 
 % Rewritten by Kang Sun on 2017/09/02
+% modified on 2018/03/06 to add airglow jacobian
+
+if isfield(inp,'airglowspec_path')
+    do_airglow = true;
+    agstruct = load(inp.airglowspec_path);
+    if isfield(inp,'VZA')
+        VZA = inp.VZA;
+    else
+        warning('You should provide VZA for airglow!')
+        VZA = 0;
+    end
+    agstruct.sa = agstruct.sa/cos(VZA/180*pi);% airglow larger at larger vza
+else
+    do_airglow = false;
+end
 
 fn = inp.fn;
 ncid = netcdf.open(fn);
@@ -23,6 +38,7 @@ outp = [];
 outp.nw = globalattribute.nwavelengths;
 outp.nz = globalattribute.nlayers;
 outp.ngas = globalattribute.ngas;
+
 outp.wave = variable.Wavelength;
 outp.ps = variable.ps;
 outp.ts = variable.ts;
@@ -40,6 +56,7 @@ for i = 1:outp.ngas
         gases{i} = new;
     end
 end
+
 outp.gases = gases;
 % outp.lon = globalattribute.lon;
 % outp.lat = globalattribute.lat;
@@ -54,6 +71,12 @@ outp.gases = gases;
 outp.aircol = variable.aircol;
 outp.surfalb = variable.surfalb;
 outp.rad = variable.radiance;
+if do_airglow
+    agspec = interp1(agstruct.w1,agstruct.sa,outp.wave);
+    agspec(isnan(agspec)) = 0;
+    agspec(isinf(agspec)) = 0;
+    outp.rad = outp.rad+agspec;
+end
 outp.irrad = variable.irradiance;
 outp.gascol = variable.gascol;
 gasnorm_all = {'H2O ',1e22;
@@ -90,7 +113,11 @@ outp.gascol_jac = squeeze(sum(outp.gas_jac,2))...
 dlnI_dC = outp.gas_jac./permute(repmat(outp.gascol,[1,1,outp.nw]),[3,1,2])...
     ./repmat(outp.rad,[1,outp.nz,outp.ngas]);
 outp.gas_jac = dlnI_dC;% jacobians in dlnI/dC
-
+if do_airglow
+    outp.airglow_jac = agspec./outp.rad;
+else
+    outp.airglow_jac = 0*outp.rad;
+end
 outp.t_jac = zeros(outp.nw,1);
 do_T_Jacobian = globalattribute.do_T_Jacobian;
 if do_T_Jacobian > 0

@@ -51,8 +51,8 @@ ReflName_array = {'conifer','sand','tapwater'};
 
 windowlist = [];
 
-windowlist(1).vStart = 1240;
-windowlist(1).vEnd = 1330;
+windowlist(1).vStart = 1245;
+windowlist(1).vEnd = 1293;
 windowlist(1).gas_cell = {'O2','O4','H2O','CO2'};
 
 windowlist(2).vStart = 1600;
@@ -78,7 +78,11 @@ for iangle = 1:length(SZA_array)
             inp.vStart = windowlist(iwin).vStart;
             inp.vEnd = windowlist(iwin).vEnd;
             inp.gas_cell = windowlist(iwin).gas_cell;
-            inp.dv_calc = 0.01;
+            if iwin == 1
+            inp.dv_calc = 0.005;
+            else
+                inp.dv_calc = 0.01;
+            end
             inp.fn_extra = ReflName;
             inp.ReflSpectra = ReflSpectra;
             outp = F_write_GCtool_input(inp);

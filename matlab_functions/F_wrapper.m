@@ -149,3 +149,4 @@ outp.prof_ak = prof_ak;
 outp.prof_dofs = prof_dofs;
 outp.prof_aperr = prof_aperr;
 outp.prof_err = prof_err;
+outp.fwhm = inp.fwhm;

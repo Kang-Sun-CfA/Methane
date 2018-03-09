@@ -9,6 +9,7 @@ function outp = F_gas_sens(inp,outp_d)
 % merged, degraded gc tool outputs, to make it work for multiple windows
 
 % Updated on 2017/10/12 to enable multiple gas profiles
+% Updated on 2018/03/06 to include airglow
 
 outp = struct;
 all_gases = {};
@@ -88,6 +89,11 @@ if isfield(inp,'inc_sfcprs')
 else
     inc_sfcprs = 0;
 end
+if isfield(inp,'inc_airglow')
+    inc_airglow = inp.inc_airglow;
+else
+    inc_airglow = 0;
+end
 ngas = length(included_gases);
 gasjac = []; 
 gascoljac = [];
@@ -100,6 +106,7 @@ codjac = [];
 cssajac = []; 
 cfracjac = [];
 sfcprsjac = [];
+airglowjac = [];
 wsnr = [];
 rad = [];
 
@@ -144,7 +151,9 @@ for iwin = 1:length(outp_d)
     if inc_alb
         albjac = cat(1,albjac,tmp_albjec);
     end
-    
+    if inc_airglow
+        airglowjac = cat(1,airglowjac,outp_d(iwin).airglow_jac);
+    end
     if inc_t
         tjac = cat(1,tjac,outp_d(iwin).t_jac);
     end
@@ -215,7 +224,7 @@ cod_aperr = inp.cod_aperr;
 cssa_aperr = inp.cssa_aperr;
 cfrac_aperr = inp.cfrac_aperr;
 sfcprs_aperr = inp.sfcprs_aperr;
-
+airglow_aperr = inp.airglow_aperr;
 for ig = 1: ngas
     gasfidxs(ig) = nv;
     
@@ -255,6 +264,7 @@ end
 % Add other terms
 tidx = -1 ; aodidx = -1 ; aodsidx = -1; assaidx = -1 ;
 codidx = -1 ; cssaidx = -1 ; cfracidx = -1 ; sfcprsidx = -1;
+airglowidx = -1;
 if inc_t 
     varnames = cat(1,varnames,'T');
     aperrs = cat(1,aperrs,t_aperr);
@@ -314,6 +324,14 @@ if inc_sfcprs
     sfcprsidx = nv; 
     nv = nv + 1;   
 end
+
+if inc_airglow
+    varnames = cat(1,varnames,'airglow');
+    aperrs = cat(1,aperrs,airglow_aperr);
+    airglowidx = nv; 
+    nv = nv + 1;   
+end
+
 nv = nv-1;
 % Derive a priori error covariance matrix 
 % Assume correlation length of 6 km for profile retrieval
@@ -392,6 +410,10 @@ end
 
 if sfcprsidx > 0
     ywf(:,sfcprsidx) = sfcprsjac;
+end
+
+if airglowidx > 0
+    ywf(:,airglowidx) = airglowjac;
 end
 % Apply OE 
 ywf = double(ywf);
