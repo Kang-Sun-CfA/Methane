@@ -4,6 +4,7 @@ function outp = F_degrade_gc_output(inp)
 % array with each element corresponds to a window.
 
 % Written by Kang Sun on 2017/09/06
+% updated on 2018/03/10 to enable different gc_fwhm for different windows
 
 outp = struct;
 nwin = inp.nwin; wmins = inp.wmins; wmaxs = inp.wmaxs;
@@ -21,7 +22,10 @@ snrdefine_dlambda = inp.snrdefine_dlambda;
 if isfield(inp,'gc_fwhm');
     gc_fwhm = inp.gc_fwhm;
 else
-    gc_fwhm = 0;
+    gc_fwhm = [0 0];
+end
+if numel(gc_fwhm) == 1
+    gc_fwhm = gc_fwhm*ones(1,nwin);
 end
 
 for iwin = 1:nwin
@@ -33,7 +37,7 @@ for iwin = 1:nwin
     end
     if ~exist('gc_output','var');error('Your window is out of range!!!');end
     % just in case the gc fwhm is not negligible
-    fwhm_true = sqrt(fwhm(iwin)^2-gc_fwhm^2);
+    fwhm_true = sqrt(fwhm(iwin)^2-gc_fwhm(iwin)^2);
     % w2 is the low resolution wavelength grid
     w2 = wmins(iwin):fwhm(iwin)/nsamp(iwin):wmaxs(iwin);
     % w1 is the high resolution wavelength grid

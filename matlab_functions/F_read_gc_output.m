@@ -4,6 +4,8 @@ function outp = F_read_gc_output(inp)
 
 % Rewritten by Kang Sun on 2017/09/02
 % modified on 2018/03/06 to add airglow jacobian
+% updated on 2018/03/10 to degrade super high res airglow spec first.
+% otherwise the airglow lines may be missed.
 
 if isfield(inp,'airglowspec_path')
     do_airglow = true;
@@ -72,9 +74,10 @@ outp.aircol = variable.aircol;
 outp.surfalb = variable.surfalb;
 outp.rad = variable.radiance;
 if do_airglow
-    agspec = interp1(agstruct.w1,agstruct.sa,outp.wave);
+    agspec = F_conv_interp_n(agstruct.w1(:),agstruct.sa(:),median(diff(outp.wave))*2,outp.wave(:));
     agspec(isnan(agspec)) = 0;
     agspec(isinf(agspec)) = 0;
+    agspec = agspec(:);
     outp.rad = outp.rad+agspec;
 end
 outp.irrad = variable.irradiance;
@@ -247,4 +250,41 @@ end
 if do_cfrac_jacobian > 0
     cfrac_jac = variable.cfrac_jac./rad;
     outp.cfrac_jac = cfrac_jac;
+end
+
+function s1_low = F_conv_interp_n(w1,s1,fwhm,common_grid)
+% This function convolves s1 with a Gaussian fwhm, resample it to
+% common_grid
+
+% Made by Kang Sun on 2016/08/02
+% Modified by Kang Sun on 2017/09/06 to vectorize s1 input, up to 3
+% dimensions
+
+slit = fwhm/1.66511;% half width at 1e
+
+dw0 = median(diff(w1));
+ndx = ceil(slit*2.7/dw0);
+xx = (0:ndx*2)*dw0-ndx*dw0;
+kernel = exp(-(xx/slit).^2);
+kernel = kernel/sum(kernel);
+size_s1 = size(s1);
+if length(size_s1) == 1
+    s1_over = conv(s1, kernel, 'same');
+    s1_low = interp1(w1,s1_over,common_grid);
+elseif length(size_s1) == 2
+    s1_low = repmat(common_grid(:),[1,size_s1(2)]);
+    for i = 1:size_s1(2)
+        s1_over = conv(s1(:,i), kernel, 'same');
+        s1_low(:,i) = interp1(w1,s1_over,common_grid);
+    end
+elseif length(size_s1) == 3
+    s1_low = repmat(common_grid(:),[1,size_s1(2),size_s1(3)]);
+    for i = 1:size_s1(2)
+        for j = 1:size_s1(3)
+            s1_over = conv(s1(:,i,j), kernel, 'same');
+            s1_low(:,i,j) = interp1(w1,s1_over,common_grid);
+        end
+    end
+else
+    error('Can not handle higher dimensions!!!')
 end
