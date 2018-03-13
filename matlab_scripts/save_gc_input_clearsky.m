@@ -7,6 +7,8 @@
 % aerosol types
 % Modified from save_gc_input_aerosols.m on 2018/03/04 to simulate clear
 % sky only and use updated window options
+% modified on 2018/03/13 to push to even higher resolutions
+
 clc
 clear
 close all
@@ -52,12 +54,20 @@ ReflName_array = {'conifer','sand','tapwater'};
 windowlist = [];
 
 windowlist(1).vStart = 1245;
-windowlist(1).vEnd = 1293;
+windowlist(1).vEnd = 1264;
 windowlist(1).gas_cell = {'O2','O4','H2O','CO2'};
 
-windowlist(2).vStart = 1600;
-windowlist(2).vEnd = 1690;
-windowlist(2).gas_cell = {'CH4','H2O','CO2'};
+windowlist(2).vStart = 1262;
+windowlist(2).vEnd = 1281;
+windowlist(2).gas_cell = {'O2','O4','H2O','CO2'};
+
+windowlist(3).vStart = 1279;
+windowlist(3).vEnd = 1298;
+windowlist(3).gas_cell = {'O2','O4','H2O','CO2'};
+
+windowlist(4).vStart = 1600;
+windowlist(4).vEnd = 1690;
+windowlist(4).gas_cell = {'CH4','H2O','CO2'};
 
 %% loops
 frun = fopen('run.sh','w');
@@ -78,10 +88,10 @@ for iangle = 1:length(SZA_array)
             inp.vStart = windowlist(iwin).vStart;
             inp.vEnd = windowlist(iwin).vEnd;
             inp.gas_cell = windowlist(iwin).gas_cell;
-            if iwin == 1
-            inp.dv_calc = 0.005;
+            if iwin == length(windowlist)
+            inp.dv_calc = 0.01;
             else
-                inp.dv_calc = 0.01;
+                inp.dv_calc = 0.002;
             end
             inp.fn_extra = ReflName;
             inp.ReflSpectra = ReflSpectra;
