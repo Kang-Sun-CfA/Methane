@@ -3,12 +3,20 @@ function outp = F_merge_gc_output(inp)
 % same. The wavelength interval has to be the same, and in phase.
 
 % Written by Kang Sun on 2017/09/06
+% updated on 2018/03/14 to enable merging airglow windows
 
 fn1 = inp.fn1;
 fn2 = inp.fn2;
 inp1.fn = fn1;
 inp2.fn = fn2;
-
+if isfield(inp,'airglowspec_path')
+    inp1.airglowspec_path = inp.airglowspec_path;
+    inp1.airglowspec_path = inp.airglowspec_path;
+end
+if isfield(inp,'VZA')
+    inp1.VZA = inp.VZA;
+    inp1.VZA = inp.VZA;
+end
 outp1 = F_read_gc_output(inp1);
 outp2 = F_read_gc_output(inp2);
 
