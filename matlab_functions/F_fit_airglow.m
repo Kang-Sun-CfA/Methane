@@ -23,7 +23,7 @@ end
 % force the convolution to be off within F_O21D_hitran
 inp.fwhm = 0;
 w2 = inp.w2;
-outp = F_O21D_hitran(inp);
+outp = F_O21D_hitran_A(inp);
 w1 = outp.wgrid;
 s1 = outp.xsec;
 s1 = s1/max(s1);

@@ -1,9 +1,5 @@
-function outp = F_O21D_hitran(inp)
-% calculate line by line parameters and optionally absorption cross
-% sections in support of airglow study for the O2 1 delta band
-
-% Written by Kang Sun on 2017/12/22
-% add patch option when revising grl paper.
+function outp = F_O21D_hitran_A(inp)
+% instead of line intensity, using einstein A.
 
 if ~isfield(inp,'patch')
     patch = false;
@@ -73,7 +69,9 @@ GammaP0 = lines.airBroadenedWidth(Filter);
 GammaPs0 = lines.selfBroadenedWidth(Filter);
 E = lines.lowerStateEnergy(Filter);
 n = lines.temperatureDependence(Filter);
+A = lines.einsteinACoefficient(Filter);
 delta = lines.pressureShift(Filter);
+g = lines.upperStatisticalWeight(Filter);
 MR = 0.2095;
 
 % number densities in molecules/cm3
@@ -91,20 +89,11 @@ else
    qqT = interp1(airglowQ(:,1),airglowQ(:,2),local_T,'linear','extrap');
 end
 if ~if_adjust_S
-S = S0*qqT0...
-    /qqT...
-    .*exp(-c2*E/local_T)./exp(-c2*E/T0)...
-    .*(1-exp(-c2*v0/local_T))./(1-exp(-c2*v0/T0));
+EE = E;
 else
-S = S0*qqT0...
-    /qqT...
-    .*exp(-c2*E/local_T)./exp(-c2*E/T0)...
-    .*(1-exp(-c2*v0/local_T))./(1-exp(-c2*v0/T0))...
-    .*exp(-c2*(v0-7883.35)./local_T);
+EE = E+v0-7883.35;
 end
-if patch
-    S = S.*v0.^2/mean(v0.^2);
-end
+
 % Lorentzian HWHM at this layer
 GammaP = (GammaP0.*(1-MR)+GammaPs0.*MR)...
     *(local_P/P0)...
@@ -113,7 +102,7 @@ GammaP = (GammaP0.*(1-MR)+GammaPs0.*MR)...
 v0 = v0+delta*local_P/P0;
 outp.w0 = 1e7./v0;
 outp.S0 = S0;
-outp.S = S;
+% outp.S = S;
 outp.GammaD = GammaD;
 outp.GammaP = GammaP;
 outp.N = N;
@@ -128,7 +117,7 @@ for iline = 1:length(v0)
     lineprofile = voigt_fn_fast(v_grid(vFilter),...
         v0(iline),GammaD(iline),GammaP(iline));
     localtau = zeros(length(v_grid),1,'single');
-    localtau(vFilter) = S(iline).*lineprofile;
+    localtau(vFilter) = g(iline)*exp(-c2*EE(iline)/local_T)*A(iline).*lineprofile;
     xsec = xsec+localtau;
 end
 wgrid = 1e7./inp.common_grid;

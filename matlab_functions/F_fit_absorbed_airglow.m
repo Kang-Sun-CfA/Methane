@@ -37,7 +37,8 @@ w2 = inp.w2;
 % simulate emission spectrum
 inp.if_adjust_S = true;
 inp.if_adjust_Q = false;
-outp = F_O21D_hitran(inp);
+% change from F_O21D_hitran to F_O21D_hitran_A on 2018/04/13
+outp = F_O21D_hitran_A(inp);
 w1 = outp.wgrid;
 s1 = outp.xsec;
 % ver spectrum in photons/s/cm3/nm
