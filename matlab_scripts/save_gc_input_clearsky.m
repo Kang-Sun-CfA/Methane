@@ -8,6 +8,7 @@
 % Modified from save_gc_input_aerosols.m on 2018/03/04 to simulate clear
 % sky only and use updated window options
 % modified on 2018/03/13 to push to even higher resolutions
+% modified on 2018/04/17 to change edge case to SZA 50 VZA 45
 
 clc
 clear
@@ -43,8 +44,8 @@ addpath([git_dir,sfs,'matlab_functions',sfs])
 addpath(plot_function_dir)
 cd(data_dir)
 %% inputs
-SZA_array = [70 45 0];% in degree
-VZA_array = [50 25 0];
+SZA_array = [50 25 0];% in degree
+VZA_array = [45 23 0];
 
 ReflSpectra_array = {'conifer_ASTER.dat','sand_ASTER.dat','tapwater_ASTER_smooth.dat'};
 ReflName_array = {'conifer','sand','tapwater'};
