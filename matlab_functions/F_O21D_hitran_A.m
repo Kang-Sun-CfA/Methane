@@ -91,7 +91,7 @@ end
 if ~if_adjust_S
 EE = E;
 else
-EE = E+v0-7883.35;
+EE = E+v0-7883.7538;
 end
 
 % Lorentzian HWHM at this layer
