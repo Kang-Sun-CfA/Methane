@@ -6,6 +6,14 @@ function outp = F_read_gc_output(inp)
 % modified on 2018/03/06 to add airglow jacobian
 % updated on 2018/03/10 to degrade super high res airglow spec first.
 % otherwise the airglow lines may be missed.
+% updated on 2018/04/24 to add the option of retrieving O2 lines/CIA
+% together
+
+if isfield(inp,'combine_lines_cia')
+    combine_lines_cia = inp.combine_lines_cia;
+else
+    combine_lines_cia = false;
+end
 
 if isfield(inp,'airglowspec_path')
     do_airglow = true;
@@ -116,6 +124,36 @@ outp.gascol_jac = squeeze(sum(outp.gas_jac,2))...
 dlnI_dC = outp.gas_jac./permute(repmat(outp.gascol,[1,1,outp.nw]),[3,1,2])...
     ./repmat(outp.rad,[1,outp.nz,outp.ngas]);
 outp.gas_jac = dlnI_dC;% jacobians in dlnI/dC
+
+if combine_lines_cia
+    o2_idx = find(strcmp(gases,'O2  '));
+    o4_idx = find(strcmp(gases,'O4  '));
+    outp.o2col_lines_jac = squeeze(outp.gas_jac(:,:,o2_idx));
+    outp.o2tcol_lines_jac = squeeze(outp.gascol_jac(:,o2_idx));
+    o2col_total_jac = outp.o2col_lines_jac*0;
+    o2tcol_total_jac = outp.o2tcol_lines_jac*0;
+    for iz = 1:outp.nz
+    o2col_total_jac(:,iz) = double(outp.o2col_lines_jac(:,iz))/double(gasnorm(o2_idx)) ...
+        +double(squeeze(outp.gas_jac(:,iz,o4_idx)))/double(gasnorm(o4_idx)) ...
+        *2*double(outp.gascol(iz,o2_idx))*double(gasnorm(o2_idx)) ...
+        /(abs(outp.zs(iz+1)-outp.zs(iz))*1e5);
+    
+    o2tcol_total_jac = o2tcol_total_jac...
+        +outp.o2col_lines_jac(:,iz)*outp.gascol(iz,o2_idx)...
+        +double(squeeze(outp.gas_jac(:,iz,o4_idx)))/double(gasnorm(o4_idx)) ...
+        *2*(double(outp.gascol(iz,o2_idx))*double(gasnorm(o2_idx))).^2 ...
+        /(abs(outp.zs(iz+1)-outp.zs(iz))*1e5);
+    end
+    o2tcol_total_jac = o2tcol_total_jac/(outp.gastcol(o2_idx)*outp.gasnorm(o2_idx));
+
+    o2col_total_jac = o2col_total_jac*outp.gasnorm(o2_idx);
+    o2tcol_total_jac = o2tcol_total_jac*outp.gasnorm(o2_idx);
+    outp.o2col_total_jac = o2col_total_jac;
+    outp.o2tcol_total_jac = o2tcol_total_jac;
+    outp.gas_jac(:,:,o2_idx) = o2col_total_jac;
+    outp.gascol_jac(:,o2_idx) = o2tcol_total_jac;
+end
+
 if do_airglow
     outp.airglow_jac = agspec./outp.rad;
 else
