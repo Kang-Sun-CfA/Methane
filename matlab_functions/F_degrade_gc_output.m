@@ -5,6 +5,7 @@ function outp = F_degrade_gc_output(inp)
 
 % Written by Kang Sun on 2017/09/06
 % updated on 2018/03/10 to enable different gc_fwhm for different windows
+% updated on 2018/04/30 to enable noise model: F_noise_model.m
 
 outp = struct;
 nwin = inp.nwin; wmins = inp.wmins; wmaxs = inp.wmaxs;
@@ -16,16 +17,32 @@ if ~isfield(inp,'fwhm')
 end
 fwhm = inp.fwhm; nsamp = inp.nsamp;
 nalb = inp.nalb;
-snre = inp.snre;
-snrdefine_rad = inp.snrdefine_rad;
-snrdefine_dlambda = inp.snrdefine_dlambda;
-if isfield(inp,'gc_fwhm');
+% snre = inp.snre;
+% snrdefine_rad = inp.snrdefine_rad;
+% snrdefine_dlambda = inp.snrdefine_dlambda;
+if isfield(inp,'gc_fwhm')
     gc_fwhm = inp.gc_fwhm;
 else
     gc_fwhm = [0 0];
 end
 if numel(gc_fwhm) == 1
     gc_fwhm = gc_fwhm*ones(1,nwin);
+end
+
+if isfield(inp,'use_snre')
+    use_snre = inp.use_snre;
+else
+    use_snre = true;
+end
+if ~use_snre && ~isfield(inp,'inpn')
+    error('You need to specify inputs for the noise model!')
+end
+if ~use_snre
+    inpn = inp.inpn;
+else
+    snre = inp.snre;
+    snrdefine_rad = inp.snrdefine_rad;
+    snrdefine_dlambda = inp.snrdefine_dlambda;
 end
 
 for iwin = 1:nwin
@@ -81,9 +98,19 @@ for iwin = 1:nwin
     %     mnrads(iwin) = mean(rad);
     fidx = lidx+1;
     % Assign SNR to measured radiance
+    if use_snre
     outp(iwin).wsnr = snre(iwin) * ...
         sqrt(outp(iwin).rad / snrdefine_rad(iwin) * ...
         fwhm(iwin)/nsamp(iwin) / snrdefine_dlambda(iwin));
+    else
+        inpn.wave = outp(iwin).wave;
+        inpn.rad = outp(iwin).rad;
+        inpn.dl = fwhm(iwin)/nsamp(iwin);
+        outpn = F_noise_model(inpn);
+        outp(iwin).wsnr = outpn.wsnr;
+        outp(iwin).wsnr_shot = outpn.wsnr_shot;
+        outp(iwin).wsnr_single = outpn.wsnr_single;
+    end
     outp(iwin).nalb = nalb(iwin);
 end
 return
