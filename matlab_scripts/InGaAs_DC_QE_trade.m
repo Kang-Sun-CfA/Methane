@@ -17,9 +17,9 @@ git_dir = '/home/kangsun/CH4/Methane/';
 
 % ub workstation
 % where gc output is
-data_dir =  '/mnt/Data2/gctool_data/outp/';
+% data_dir =  '/mnt/Data2/gctool_data/outp/';
 % source code containing matlab functions
-git_dir = '/home/kangsun/CH4/Methane/';
+% git_dir = '/home/kangsun/CH4/Methane/';
 
 addpath([git_dir,'matlab_functions/'])
 %%
