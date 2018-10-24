@@ -29,6 +29,12 @@ else
     do_airglow = false;
 end
 
+if ~isfield(inp,'if_lnR')
+    if_lnR = true;
+else
+    if_lnR = inp.if_lnR;
+end
+
 fn = inp.fn;
 ncid = netcdf.open(fn);
 [~,nvars,ngatts] = netcdf.inq(ncid);
@@ -288,6 +294,18 @@ end
 if do_cfrac_jacobian > 0
     cfrac_jac = variable.cfrac_jac./rad;
     outp.cfrac_jac = cfrac_jac;
+end
+outp.if_lnR = if_lnR;
+if ~if_lnR
+    outpfn = fieldnames(outp);
+    for ifn = 1:length(outpfn)
+        if contains(outpfn{ifn},'_jac')
+        if strcmp(outpfn{ifn}(end-3:end),'_jac')
+            outp.(outpfn{ifn}) = outp.(outpfn{ifn}).*outp.rad;
+             disp([outpfn{ifn},' unnormalized!']);
+        end
+        end
+    end
 end
 
 function s1_low = F_conv_interp_n(w1,s1,fwhm,common_grid)

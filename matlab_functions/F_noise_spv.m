@@ -81,10 +81,18 @@ else
 	dy0 = dt/(1/7);
 end
 
+if dy0 == 0
+    n_along_track = 1;
+else
 % number of along track averaging
 n_along_track = dy0/7/dt;
+end
+if dx0 == 0
+    n_across_track = 1;
+else
 % number of x-track averaging
 n_across_track = dx0/dx;
+end
 
 % readout and dark noise
 if isfield(inpn,'Nr')

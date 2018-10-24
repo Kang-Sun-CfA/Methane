@@ -3,6 +3,7 @@ function outp = F_read_spv_output(inp)
 % Kang Sun on 2018/08/20
 
 % modified by Kang Sun on 2018/08/26 to add airglow to rad first
+% updated by Kang Sun on 2018/10/24 to incorporate brdf jacobians
 
 % inp = [];
 % inp.fn = '~/runspv/outp/CH4_1660-1670_0.01_50_45_base_GC_upwelling_output.nc';
@@ -28,6 +29,12 @@ if isfield(inp,'O2par_path')
     end
 else
     do_airglow = false;
+end
+
+if ~isfield(inp,'if_lnR')
+    if_lnR = true;
+else
+    if_lnR = inp.if_lnR;
 end
 
 fn = inp.fn;
@@ -256,7 +263,23 @@ for i = 1:outp.naerosol
 end
 
 % dlnI/dsurfalb
+if isfield(variable,'surfalb_jac')
 outp.surfalb_jac = variable.surfalb_jac./ variable.surfalb./outp.rad;
+else
+    outp.surfalb_jac = variable.BRDF_f_isotr_jac./ variable.surfalb./outp.rad;
+end
+outp.if_lnR = if_lnR;
+if ~if_lnR
+    outpfn = fieldnames(outp);
+    for ifn = 1:length(outpfn)
+        if contains(outpfn{ifn},'_jac')
+        if strcmp(outpfn{ifn}(end-3:end),'_jac')
+            outp.(outpfn{ifn}) = outp.(outpfn{ifn}).*outp.rad;
+%             disp([outpfn{ifn},' unnormalized!']);
+        end
+        end
+    end
+end
 
 function s1_low = F_conv_interp_n(w1,s1,fwhm,common_grid)
 % This function convolves s1 with a Gaussian fwhm, resample it to

@@ -357,8 +357,8 @@ end
 % ==============================================
 ny = length(rad);
 % ymeas = log(rad);
-ysig  = wsnr;
-syn1 = diag(ysig.^2);
+% ysig  = wsnr;
+% syn1 = diag(ysig.^2);
 
 % ==============================================
 % set measurement weighting functions and
@@ -418,6 +418,18 @@ end
 % Apply OE 
 ywf = double(ywf);
 ywft = ywf';
+
+if outp_d(1).if_lnR
+ysig  = wsnr;
+syn1 = diag(ysig.^2);
+else
+%     syn1 = diag((wsnr./rad).^2);
+ywf = ywf ./double(repmat(rad,[1, nv]));
+ywft = ywf';
+ysig  = wsnr;
+syn1 = diag(ysig.^2);
+end
+
 sa = double(sa);
 syn1 = double(syn1);
 
