@@ -1,5 +1,6 @@
 function outp = F_gas_sens_spv(inp,outp_d)
 % the spv version of F_gas_sens.m. Written by Kang Sun on 2018/08/24
+% updated on 2018/11/10 to include ILS forward model error
 
 if isfield(inp,'albsnorm')
     albsnorm = inp.albsnorm;
@@ -101,6 +102,11 @@ if isfield(inp,'inc_airglow')
 else
     inc_airglow = 0;
 end
+if isfield(inp,'do_ils')
+    do_ils = inp.do_ils;
+else
+    do_ils = 0;
+end
 ngas = length(included_gases);
 % number of aerosols has to be the same across all windows!
 aerosols = inp.included_aerosols;
@@ -125,6 +131,26 @@ cssajac = [];
 cfracjac = [];
 sfcprsjac = [];
 airglowjac = [];
+if do_ils
+    outp_d_fn = fieldnames(outp_d(1));
+    ils_jac_struct = [];
+    ils_aperr_struct = [];
+    ils_par_list = [];
+    for ifn = 1:length(outp_d_fn)
+        if regexp(outp_d_fn{ifn},'ils_\w*_jac')
+            ils_jac_struct.(outp_d_fn{ifn}) = [];
+            tmp_ils_par = extractBetween(outp_d_fn{ifn},'ils_','_jac');
+            ils_aperr_struct.(['ils_',tmp_ils_par{1},'_aperr']) = inp.(['ils_',tmp_ils_par{1},'_aperr']);
+            ils_par_list = cat(1,ils_par_list,tmp_ils_par(1));
+        end
+    end
+    ils_jac_struct_fn = fieldnames(ils_jac_struct);
+end
+% if do_ils
+%     ils_fwhm_aperr = inp.ils_fwhm_aperr;
+%     ils_aw_aperr = inp.ils_aw_aperr;
+%     ils_k_aperr = inp.ils_k_aperr;
+% end
 wsnr = [];
 rad = [];
 
@@ -170,32 +196,32 @@ for iwin = 1:length(outp_d)
     gascoljac = cat(1,gascoljac,tmp_col_jac);
     gasjac = cat(1,gasjac,tmp_prof_jac);
     
-
-        tmp_aod_jac = zeros(outp_d(iwin).nw,naerosol);
-        for ia = 1:naerosol
-            aodtau(ia) = outp_d(iwin).([aerosols{ia},'_aod_tau']);
-            tmp_aod_jac(:,ia) = outp_d(iwin).([aerosols{ia},'_aod_tau_jac']);
-        end
-        aodjac = cat(1,aodjac,tmp_aod_jac);
-
     
-
-        tmp_aod_pkh_jac = zeros(outp_d(iwin).nw,naerosol);
-        for ia = 1:naerosol
-            aodpkh(ia) = outp_d(iwin).([aerosols{ia},'_aod_pkh']);
-            tmp_aod_pkh_jac(:,ia) = outp_d(iwin).([aerosols{ia},'_aod_pkh_jac']);
-        end
-        aodpkhjac = cat(1,aodpkhjac,tmp_aod_pkh_jac);
-
+    tmp_aod_jac = zeros(outp_d(iwin).nw,naerosol);
+    for ia = 1:naerosol
+        aodtau(ia) = outp_d(iwin).([aerosols{ia},'_aod_tau']);
+        tmp_aod_jac(:,ia) = outp_d(iwin).([aerosols{ia},'_aod_tau_jac']);
+    end
+    aodjac = cat(1,aodjac,tmp_aod_jac);
     
-
-        tmp_aod_hfw_jac = zeros(outp_d(iwin).nw,naerosol);
-        for ia = 1:naerosol
-            aodhfw(ia) = outp_d(iwin).([aerosols{ia},'_aod_hfw']);
-            tmp_aod_hfw_jac(:,ia) = outp_d(iwin).([aerosols{ia},'_aod_hfw_jac']);
-        end
-        aodhfwjac = cat(1,aodhfwjac,tmp_aod_hfw_jac);
-
+    
+    
+    tmp_aod_pkh_jac = zeros(outp_d(iwin).nw,naerosol);
+    for ia = 1:naerosol
+        aodpkh(ia) = outp_d(iwin).([aerosols{ia},'_aod_pkh']);
+        tmp_aod_pkh_jac(:,ia) = outp_d(iwin).([aerosols{ia},'_aod_pkh_jac']);
+    end
+    aodpkhjac = cat(1,aodpkhjac,tmp_aod_pkh_jac);
+    
+    
+    
+    tmp_aod_hfw_jac = zeros(outp_d(iwin).nw,naerosol);
+    for ia = 1:naerosol
+        aodhfw(ia) = outp_d(iwin).([aerosols{ia},'_aod_hfw']);
+        tmp_aod_hfw_jac(:,ia) = outp_d(iwin).([aerosols{ia},'_aod_hfw_jac']);
+    end
+    aodhfwjac = cat(1,aodhfwjac,tmp_aod_hfw_jac);
+    
     
     wsnr = cat(1,wsnr,outp_d(iwin).wsnr);
     rad = cat(1,rad,outp_d(iwin).rad);
@@ -203,18 +229,24 @@ for iwin = 1:length(outp_d)
     tmp_albjec = zeros(outp_d(iwin).nw,nalb_all);
     tmp_albjec(:,alb_count:alb_count+outp_d(iwin).nalb-1) = outp_d(iwin).surfalb_jac;
     alb_count = alb_count+outp_d(iwin).nalb;
-
-        albjac = cat(1,albjac,tmp_albjec);
-
-
-        airglowjac = cat(1,airglowjac,outp_d(iwin).airglow_jac);
-
-
-        tjac = cat(1,tjac,outp_d(iwin).t_jac);
-
-
-        sfcprsjac = cat(1,sfcprsjac,outp_d(iwin).sfcprs_jac);
-
+    
+    albjac = cat(1,albjac,tmp_albjec);
+    
+    
+    airglowjac = cat(1,airglowjac,outp_d(iwin).airglow_jac);
+    
+    
+    tjac = cat(1,tjac,outp_d(iwin).t_jac);
+    
+    
+    sfcprsjac = cat(1,sfcprsjac,outp_d(iwin).sfcprs_jac);
+    
+    if do_ils
+        for ifn = 1:length(ils_jac_struct_fn)
+            ils_jac_struct.(ils_jac_struct_fn{ifn}) = ...
+                cat(1,ils_jac_struct.(ils_jac_struct_fn{ifn}),outp_d(iwin).(ils_jac_struct_fn{ifn}));
+        end
+    end
     if inc_assa
         assajac = cat(1,assajac,outp_d(iwin).assa_jac);
     end
@@ -244,11 +276,11 @@ gasnvar  = zeros(ngas,1);
 % construct gases a priori
 gascol_aperr = inp.gascol_aperr_scale(1:ngas);%*gastcol;% dlnI/dlnx now, not dlnI/dx any more
 
-gasprof_aperr_scale = zeros(outp_d(1).nz,nprof); 
+gasprof_aperr_scale = zeros(outp_d(1).nz,nprof);
 for iprof = 1:nprof
-gasprof_aperr_scale(outp_d(1).zs <= 2,iprof) = inp.gasprof_aperr_scale_LT(iprof);
-gasprof_aperr_scale(outp_d(1).zs > 2 & outp_d(1).zs <= 17,iprof) = inp.gasprof_aperr_scale_UT(iprof);
-gasprof_aperr_scale(outp_d(1).zs > 17,iprof) = inp.gasprof_aperr_scale_ST(iprof);
+    gasprof_aperr_scale(outp_d(1).zs <= 2,iprof) = inp.gasprof_aperr_scale_LT(iprof);
+    gasprof_aperr_scale(outp_d(1).zs > 2 & outp_d(1).zs <= 17,iprof) = inp.gasprof_aperr_scale_UT(iprof);
+    gasprof_aperr_scale(outp_d(1).zs > 17,iprof) = inp.gasprof_aperr_scale_ST(iprof);
 end
 
 gasprof_aperr = gascol;
@@ -257,7 +289,7 @@ for ig = 1:ngas
     if inc_prof(ig)
         iprof = iprof+1;
         % if dlnI/dlnx
-%         gasprof_aperr(:,ig) = gasprof_aperr_scale(:,iprof);
+        %         gasprof_aperr(:,ig) = gasprof_aperr_scale(:,iprof);
         % if dlnI/dx
         if if_vmr(ig)
             gasprof_aperr(:,ig) = gasvmr(:,ig).*gasprof_aperr_scale(:,iprof);
@@ -269,8 +301,8 @@ end
 % gasprof_aperr = gascol.*repmat(gasprof_aperr_scale,[1,ngas]);
 outp.gasprof_aperr = gasprof_aperr;
 
-albs_aperr = inp.albs_aperr; 
-t_aperr = inp.t_aperr; 
+albs_aperr = inp.albs_aperr;
+t_aperr = inp.t_aperr;
 aod_aperr = inp.aod_aperr;
 aod_pkh_aperr = inp.aod_pkh_aperr;
 aod_hfw_aperr = inp.aod_hfw_aperr;
@@ -280,6 +312,7 @@ cssa_aperr = inp.cssa_aperr;
 cfrac_aperr = inp.cfrac_aperr;
 sfcprs_aperr = inp.sfcprs_aperr;
 airglow_aperr = inp.airglow_aperr;
+
 for ig = 1: ngas
     gasfidxs(ig) = nv;
     
@@ -320,11 +353,11 @@ end
 tidx = -1 ; assaidx = -1 ;
 codidx = -1 ; cssaidx = -1 ; cfracidx = -1 ; sfcprsidx = -1;
 airglowidx = -1;
-if inc_t 
+if inc_t
     varnames = cat(1,varnames,'T');
     aperrs = cat(1,aperrs,t_aperr);
     tidx = nv;
-    nv = nv + 1;   
+    nv = nv + 1;
 end
 
 aodidxs = zeros(naerosol,1);
@@ -357,67 +390,67 @@ if inc_aod_hfw
     end
 end
 
-if inc_assa 
+if inc_assa
     varnames = cat(1,varnames,'assa');
     aperrs = cat(1,aperrs,assa_aperr);
     assaidx = nv;
-    nv = nv + 1;   
+    nv = nv + 1;
 end
 
-if inc_cod 
+if inc_cod
     varnames = cat(1,varnames, 'cod');
     aperrs = cat(1,aperrs,cod_aperr);
-    codidx = nv; 
-    nv = nv + 1;   
+    codidx = nv;
+    nv = nv + 1;
 end
 
-if inc_cssa 
+if inc_cssa
     varnames = cat(1,varnames,'cssa');
     aperrs = cat(1,aperrs,cssa_aperr);
-    cssaidx = nv; 
-    nv = nv + 1;   
+    cssaidx = nv;
+    nv = nv + 1;
 end
 
 if inc_cfrac
     varnames = cat(1,varnames,'cfrac');
     aperrs = cat(1,aperrs,cfrac_aperr);
-    cfracidx = nv; 
-    nv = nv + 1;   
+    cfracidx = nv;
+    nv = nv + 1;
 end
 
-if inc_sfcprs 
+if inc_sfcprs
     varnames = cat(1,varnames,'sfcprs');
     aperrs = cat(1,aperrs,sfcprs_aperr);
-    sfcprsidx = nv; 
-    nv = nv + 1;   
+    sfcprsidx = nv;
+    nv = nv + 1;
 end
 
 if inc_airglow
     varnames = cat(1,varnames,'airglow');
     aperrs = cat(1,aperrs,airglow_aperr);
-    airglowidx = nv; 
-    nv = nv + 1;   
+    airglowidx = nv;
+    nv = nv + 1;
 end
 
 nv = nv-1;
-% Derive a priori error covariance matrix 
+% Derive a priori error covariance matrix
 % Assume correlation length of 6 km for profile retrieval
 corrlen = 6.0;
 sa = diag(aperrs.^2);
 zmid = outp_d(1).zs;
 for ig = 1: ngas
-   if inc_prof(ig) 
-      fidx = gasfidxs(ig);
-      tempcovar = sa(fidx:fidx+nz-1, fidx:fidx+nz-1);
-      for i = 1: nz
-         for j = 1: i
-            tempcovar(i, j) = sqrt(tempcovar(i, i) * tempcovar(j, j)) ...
-                              * exp( -abs((zmid(i)-zmid(j))/corrlen));
-            tempcovar(j, i) = tempcovar(i, j);
-         end
-      end
-      sa(fidx:fidx+nz-1, fidx:fidx+nz-1) = tempcovar;
-   end
+    if inc_prof(ig)
+        fidx = gasfidxs(ig);
+        tempcovar = sa(fidx:fidx+nz-1, fidx:fidx+nz-1);
+        for i = 1: nz
+            for j = 1: i
+                tempcovar(i, j) = sqrt(tempcovar(i, i) * tempcovar(j, j)) ...
+                    * exp( -abs((zmid(i)-zmid(j))/corrlen));
+                tempcovar(j, i) = tempcovar(i, j);
+            end
+        end
+        sa(fidx:fidx+nz-1, fidx:fidx+nz-1) = tempcovar;
+    end
 end
 % ==============================================
 % set measurement vector and covariance matrix
@@ -493,19 +526,19 @@ end
 if airglowidx > 0
     ywf(:,airglowidx) = airglowjac;
 end
-% Apply OE 
+% Apply OE
 ywf = double(ywf);
 ywft = ywf';
 
 if outp_d(1).if_lnR
-ysig  = wsnr;
-syn1 = diag(ysig.^2);
+    ysig  = wsnr;
+    syn1 = diag(ysig.^2);
 else
     syn1 = diag((wsnr./rad).^2);
-% ywf = ywf ./double(repmat(rad,[1, nv]));
-% ywft = ywf';
-% ysig  = wsnr;
-% syn1 = diag(ysig.^2);
+    % ywf = ywf ./double(repmat(rad,[1, nv]));
+    % ywft = ywf';
+    % ysig  = wsnr;
+    % syn1 = diag(ysig.^2);
 end
 
 sa = double(sa);
@@ -615,6 +648,21 @@ end
 
 outp.xch4e_f_aod_hfw = xch4e_f_aod_hfw;
 outp.xch4e_i_aod_hfw = xch4e_i_aod_hfw;
+
+if do_ils
+    for ifn = 1:length(ils_jac_struct_fn)
+        tmp_s = contri * double(ils_jac_struct.(ils_jac_struct_fn{ifn}))...
+            * ils_aperr_struct.(['ils_',ils_par_list{ifn},'_aperr'])^2 * ...
+            double(ils_jac_struct.(ils_jac_struct_fn{ifn}))' * contri';
+        outp.(['xch4e_f_ils_',ils_par_list{ifn}]) = sqrt(k'*tmp_s*k);
+    end
+%     s_f_ils_fwhm = contri * double(ils_fwhm_jac) * ils_fwhm_aperr^2 * double(ils_fwhm_jac') * contri';
+%     outp.xch4e_f_ils_fwhm = sqrt(k'*s_f_ils_fwhm*k);
+%     s_f_ils_aw = contri * double(ils_aw_jac) * ils_aw_aperr^2 * double(ils_aw_jac') * contri';
+%     outp.xch4e_f_ils_aw = sqrt(k'*s_f_ils_aw*k);
+%     s_f_ils_k = contri * double(ils_k_jac) * ils_k_aperr^2 * double(ils_k_jac') * contri';
+%     outp.xch4e_f_ils_k = sqrt(k'*s_f_ils_k*k);
+end
 % sqrt(sum(sum(se(gasfidxs(1):gasfidxs(2)-1,gasfidxs(1):gasfidxs(2)-1))))/gastcol(1)
 
 outp.ny = ny; outp.nv = nv; outp.varnames = varnames;
@@ -623,7 +671,7 @@ outp.ss = ss; outp.contri = contri;
 outp.sa = sa; outp.aperrs = aperrs;
 outp.ywf = ywf;
 
-outp.gasfidxs = gasfidxs; 
+outp.gasfidxs = gasfidxs;
 outp.alb_idx_1 = alb_idx_1; outp.alb_idx_2 = alb_idx_2;
 outp.tidx = tidx;
 outp.aodidxs = aodidxs;

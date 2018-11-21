@@ -2,6 +2,7 @@ function outp = F_degrade_spv_output(inp)
 % Convolve the output from spv with a gaussian FWHM. The output is a structure
 % array with each element corresponds to a window. Modified from
 % F_degrade_gc_output.m by Kang Sun on 2018/08/20
+% updated the instrument model on 2018/11/08 and add ILS jacobians
 
 outp = struct;
 nwin = inp.nwin; wmins = inp.wmins; wmaxs = inp.wmaxs;
@@ -20,8 +21,14 @@ nalb = inp.nalb;
 if ~isfield(inp,'inpn')
     error('You need to specify inputs for the noise model!')
 end
-
 inpn = inp.inpn;
+
+if ~isfield(inp,'inp_ils')
+    warning('No ILS is specified. Use Gaussian.')
+    inp_ils = [];
+else
+    inp_ils = inp.inp_ils;
+end
 
 
 spv_fwhm = zeros(nwin,1);
@@ -50,7 +57,11 @@ for iwin = 1:nwin
         if ~iscell(spv_output.(fieldn{ifield}))
             if size(spv_output.(fieldn{ifield}),1) == spv_output.nw
                 s1 = spv_output.(fieldn{ifield});
-                outp(iwin).(fieldn{ifield}) = F_conv_interp_n(w1,s1,fwhm_true,w2);
+                if ~isempty(inp_ils)
+                    outp(iwin).(fieldn{ifield}) = F_instrument_model(w1,s1,fwhm_true,w2,inp_ils{iwin});
+                else
+                    outp(iwin).(fieldn{ifield}) = F_instrument_model(w1,s1,fwhm_true,w2,inp_ils);
+                end
             else
                 outp(iwin).(fieldn{ifield}) = spv_output.(fieldn{ifield});
             end
@@ -59,6 +70,50 @@ for iwin = 1:nwin
         end
     end
     outp(iwin).nw = length(outp(iwin).wave);
+    if ~isempty(inp_ils)
+        if ~isfield(inp_ils{iwin},'do_jac')
+            do_jac = false;
+        else
+            do_jac = inp_ils{iwin}.do_jac;
+        end
+        if do_jac
+            dstep = 5e-4;
+            inp_ils_tmp = inp_ils{iwin};
+            inp_ils_tmp.m = inp_ils{iwin}.m*(1-dstep);
+            rad1 = F_instrument_model(double(spv_output.wave),double(spv_output.rad),fwhm_true,double(w2),inp_ils_tmp);
+            inp_ils_tmp.m = inp_ils{iwin}.m*(1+dstep);
+            rad2 = F_instrument_model(double(spv_output.wave),double(spv_output.rad),fwhm_true,double(w2),inp_ils_tmp);
+            outp(iwin).ils_m_jac = (rad2-rad1)/(2*dstep);
+            
+            % jac for eta is not dy/dlnx, it is dy/dx
+            inp_ils_tmp = inp_ils{iwin};
+            inp_ils_tmp.eta = inp_ils{iwin}.eta-dstep;
+            rad1 = F_instrument_model(double(spv_output.wave),double(spv_output.rad),fwhm_true,double(w2),inp_ils_tmp);
+            inp_ils_tmp.eta = inp_ils{iwin}.eta+dstep;
+            rad2 = F_instrument_model(double(spv_output.wave),double(spv_output.rad),fwhm_true,double(w2),inp_ils_tmp);
+            outp(iwin).ils_eta_jac = (rad2-rad1)/(2*dstep);
+            
+            inp_ils_tmp = inp_ils{iwin};
+            inp_ils_tmp.k = inp_ils{iwin}.k*(1-dstep);
+            rad1 = F_instrument_model(double(spv_output.wave),double(spv_output.rad),fwhm_true,double(w2),inp_ils_tmp);
+            inp_ils_tmp.k = inp_ils{iwin}.k*(1+dstep);
+            rad2 = F_instrument_model(double(spv_output.wave),double(spv_output.rad),fwhm_true,double(w2),inp_ils_tmp);
+            outp(iwin).ils_k_jac = (rad2-rad1)/(2*dstep);
+            
+            % jac for aw is not dy/dlnx, it is dy/dx
+            inp_ils_tmp = inp_ils{iwin};
+            inp_ils_tmp.aw = inp_ils{iwin}.aw-dstep;
+            rad1 = F_instrument_model(double(spv_output.wave),double(spv_output.rad),fwhm_true,double(w2),inp_ils_tmp);
+            inp_ils_tmp.aw = inp_ils{iwin}.aw+dstep;
+            rad2 = F_instrument_model(double(spv_output.wave),double(spv_output.rad),fwhm_true,double(w2),inp_ils_tmp);
+            outp(iwin).ils_aw_jac = (rad2-rad1)/(2*dstep);
+            
+            rad1 = F_instrument_model(double(spv_output.wave),double(spv_output.rad),fwhm_true*(1-dstep),double(w2),inp_ils{iwin});
+            rad2 = F_instrument_model(double(spv_output.wave),double(spv_output.rad),fwhm_true*(1+dstep),double(w2),inp_ils{iwin});
+            outp(iwin).ils_fwhm_jac = (rad2-rad1)/(2*dstep);
+            
+        end
+    end
     %     outp(iwin).gases = spv_output.gases;
     %     outp(iwin).gasnorm = spv_output.gasnorm;
 end
@@ -93,41 +148,4 @@ for iwin = 1:nwin
     outp(iwin).wsnr_single = outpn.wsnr_single;
     
     outp(iwin).nalb = nalb(iwin);
-end
-
-function s1_low = F_conv_interp_n(w1,s1,fwhm,common_grid)
-% This function convolves s1 with a Gaussian fwhm, resample it to
-% common_grid
-
-% Made by Kang Sun on 2016/08/02
-% Modified by Kang Sun on 2017/09/06 to vectorize s1 input, up to 3
-% dimensions
-
-slit = fwhm/1.66511;% half width at 1e
-
-dw0 = median(diff(w1));
-ndx = ceil(slit*2.7/dw0);
-xx = (0:ndx*2)*dw0-ndx*dw0;
-kernel = exp(-(xx/slit).^2);
-kernel = kernel/sum(kernel);
-size_s1 = size(s1);
-if length(size_s1) == 1
-    s1_over = conv(s1, kernel, 'same');
-    s1_low = interp1(w1,s1_over,common_grid);
-elseif length(size_s1) == 2
-    s1_low = repmat(common_grid(:),[1,size_s1(2)]);
-    for i = 1:size_s1(2)
-        s1_over = conv(s1(:,i), kernel, 'same');
-        s1_low(:,i) = interp1(w1,s1_over,common_grid);
-    end
-elseif length(size_s1) == 3
-    s1_low = repmat(common_grid(:),[1,size_s1(2),size_s1(3)]);
-    for i = 1:size_s1(2)
-        for j = 1:size_s1(3)
-            s1_over = conv(s1(:,i,j), kernel, 'same');
-            s1_low(:,i,j) = interp1(w1,s1_over,common_grid);
-        end
-    end
-else
-    error('Can not handle higher dimensions!!!')
 end

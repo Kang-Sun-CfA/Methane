@@ -72,7 +72,7 @@ else
     outp.nz = outp.nz0;
 end
 
-outp.wave = variable.Wavelength;
+outp.wave = double(variable.Wavelength);
 gases = cell(outp.ngas,1);
 for i = 1:outp.ngas
     gases{i} = gases0{i};
