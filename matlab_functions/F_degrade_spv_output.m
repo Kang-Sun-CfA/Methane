@@ -146,6 +146,6 @@ for iwin = 1:nwin
     outp(iwin).wsnr = outpn.wsnr;
     outp(iwin).wsnr_shot = outpn.wsnr_shot;
     outp(iwin).wsnr_single = outpn.wsnr_single;
-    
+    outp(iwin).S = outpn.S;
     outp(iwin).nalb = nalb(iwin);
 end

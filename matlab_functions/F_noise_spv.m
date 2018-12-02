@@ -1,6 +1,7 @@
 function outpn = F_noise_spv(inpn)
 % matlab function to calculate channel-by-channel snr. modified by Kang Sun
 % from F_noise_model.m on 2018/08/20, made simpler
+% updated on 2018/12/02 to output signal in electrons per exposure
 
 if isfield(inpn,'I')
     I = inpn.I;
@@ -127,4 +128,6 @@ outpn.wsnr_shot = sqrt(S*n_across_track*n_along_track);
 outpn.A = A;
 outpn.dx = dx;
 outpn.H = H;
+outpn.S = S;
+outpn.N = N;
 
