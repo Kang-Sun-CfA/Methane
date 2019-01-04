@@ -69,6 +69,20 @@ for iwin = 1:nwin
             outp(iwin).(fieldn{ifield}) = spv_output.(fieldn{ifield});
         end
     end
+    
+    % calculate wavelength shift jacobians
+    s1 = spv_output.rad;
+    dstep = 1e-5;
+    if ~isempty(inp_ils)
+        outp(iwin).shift_jac = (F_instrument_model(w1,s1,fwhm_true,w2+dstep,inp_ils{iwin})-...
+            F_instrument_model(w1,s1,fwhm_true,w2,inp_ils{iwin}))/dstep;
+    else
+        outp(iwin).shift_jac = (F_instrument_model(w1,s1,fwhm_true,w2+dstep,inp_ils)-...
+            F_instrument_model(w1,s1,fwhm_true,w2,inp_ils))/dstep;
+    end
+    % zlo (in the unit of 2e13) jacobians
+    outp(iwin).zlo_jac = ones(size(outp(iwin).rad))*2e13;
+    
     outp(iwin).nw = length(outp(iwin).wave);
     if ~isempty(inp_ils)
         if ~isfield(inp_ils{iwin},'do_jac')

@@ -1,6 +1,7 @@
 function outp = F_gas_sens_spv(inp,outp_d)
 % the spv version of F_gas_sens.m. Written by Kang Sun on 2018/08/24
 % updated on 2018/11/10 to include ILS forward model error
+% updated on 2019/01/03 to swith ILS interference/forward model error
 
 if isfield(inp,'albsnorm')
     albsnorm = inp.albsnorm;
@@ -102,10 +103,20 @@ if isfield(inp,'inc_airglow')
 else
     inc_airglow = 0;
 end
-if isfield(inp,'do_ils')
-    do_ils = inp.do_ils;
+if isfield(inp,'inc_ils')
+    inc_ils = inp.inc_ils;
 else
-    do_ils = 0;
+    inc_ils = 0;
+end
+if isfield(inp,'inc_zlo')
+    inc_zlo = inp.inc_zlo;
+else
+    inc_zlo = 0;
+end
+if isfield(inp,'inc_shift')
+    inc_shift = inp.inc_shift;
+else
+    inc_shift = 0;
 end
 ngas = length(included_gases);
 % number of aerosols has to be the same across all windows!
@@ -131,21 +142,23 @@ cssajac = [];
 cfracjac = [];
 sfcprsjac = [];
 airglowjac = [];
-if do_ils
-    outp_d_fn = fieldnames(outp_d(1));
-    ils_jac_struct = [];
-    ils_aperr_struct = [];
-    ils_par_list = [];
-    for ifn = 1:length(outp_d_fn)
-        if regexp(outp_d_fn{ifn},'ils_\w*_jac')
-            ils_jac_struct.(outp_d_fn{ifn}) = [];
-            tmp_ils_par = extractBetween(outp_d_fn{ifn},'ils_','_jac');
-            ils_aperr_struct.(['ils_',tmp_ils_par{1},'_aperr']) = inp.(['ils_',tmp_ils_par{1},'_aperr']);
-            ils_par_list = cat(1,ils_par_list,tmp_ils_par(1));
-        end
+shiftjac = [];
+zlojac = [];
+
+outp_d_fn = fieldnames(outp_d(1));
+ils_jac_struct = [];
+ils_aperr_struct = [];
+ils_par_list = [];
+for ifn = 1:length(outp_d_fn)
+    if regexp(outp_d_fn{ifn},'ils_\w*_jac')
+        ils_jac_struct.(outp_d_fn{ifn}) = [];
+        tmp_ils_par = extractBetween(outp_d_fn{ifn},'ils_','_jac');
+        ils_aperr_struct.(['ils_',tmp_ils_par{1},'_aperr']) = inp.(['ils_',tmp_ils_par{1},'_aperr']);
+        ils_par_list = cat(1,ils_par_list,tmp_ils_par(1));
     end
-    ils_jac_struct_fn = fieldnames(ils_jac_struct);
 end
+ils_jac_struct_fn = fieldnames(ils_jac_struct);
+
 % if do_ils
 %     ils_fwhm_aperr = inp.ils_fwhm_aperr;
 %     ils_aw_aperr = inp.ils_aw_aperr;
@@ -213,8 +226,6 @@ for iwin = 1:length(outp_d)
     end
     aodpkhjac = cat(1,aodpkhjac,tmp_aod_pkh_jac);
     
-    
-    
     tmp_aod_hfw_jac = zeros(outp_d(iwin).nw,naerosol);
     for ia = 1:naerosol
         aodhfw(ia) = outp_d(iwin).([aerosols{ia},'_aod_hfw']);
@@ -222,6 +233,17 @@ for iwin = 1:length(outp_d)
     end
     aodhfwjac = cat(1,aodhfwjac,tmp_aod_hfw_jac);
     
+    if inc_shift
+        tmp_shift_jac = zeros(outp_d(iwin).nw,2);
+        tmp_shift_jac(:,iwin) = outp_d(iwin).shift_jac;
+        shiftjac = cat(1,shiftjac,tmp_shift_jac);
+    end
+    
+    if inc_zlo
+        tmp_zlo_jac = zeros(outp_d(iwin).nw,2);
+        tmp_zlo_jac(:,iwin) = outp_d(iwin).zlo_jac;
+        zlojac = cat(1,zlojac,tmp_zlo_jac);
+    end
     
     wsnr = cat(1,wsnr,outp_d(iwin).wsnr);
     rad = cat(1,rad,outp_d(iwin).rad);
@@ -241,12 +263,12 @@ for iwin = 1:length(outp_d)
     
     sfcprsjac = cat(1,sfcprsjac,outp_d(iwin).sfcprs_jac);
     
-    if do_ils
-        for ifn = 1:length(ils_jac_struct_fn)
-            ils_jac_struct.(ils_jac_struct_fn{ifn}) = ...
-                cat(1,ils_jac_struct.(ils_jac_struct_fn{ifn}),outp_d(iwin).(ils_jac_struct_fn{ifn}));
-        end
+    
+    for ifn = 1:length(ils_jac_struct_fn)
+        ils_jac_struct.(ils_jac_struct_fn{ifn}) = ...
+            cat(1,ils_jac_struct.(ils_jac_struct_fn{ifn}),outp_d(iwin).(ils_jac_struct_fn{ifn}));
     end
+    
     if inc_assa
         assajac = cat(1,assajac,outp_d(iwin).assa_jac);
     end
@@ -319,7 +341,7 @@ for ig = 1: ngas
     if inc_prof(ig)
         tempcell = cell(nz,1);
         for icell = 1:nz
-            tempcell{icell} = [included_gases{ig},'-',num2str(icell)];
+            tempcell{icell} = [included_gases{ig},'-',num2str(icell),'-',num2str(outp_d(1).zs(icell),'%.1f'),'km'];
         end
         varnames = cat(1,varnames,tempcell);
         aperrs = cat(1,aperrs,gasprof_aperr(:,ig));
@@ -349,6 +371,30 @@ if inc_alb
     end
     alb_idx_2 = nv-1;
 end
+% shift
+shift_idx_1 = -1;
+shift_idx_2 = -1;
+if inc_shift
+    shift_idx_1 = nv;
+    for iwin = 1:length(outp_d)
+        varnames = cat(1,varnames,['shift',num2str(iwin)]);
+        aperrs = cat(1,aperrs,inp.shift_aperr(iwin));
+        nv = nv+1;
+    end
+    shift_idx_2 = nv-1;
+end
+% zlo
+zlo_idx_1 = -1;
+zlo_idx_2 = -1;
+if inc_zlo
+    zlo_idx_1 = nv;
+    for iwin = 1:length(outp_d)
+        varnames = cat(1,varnames,['zlo',num2str(iwin)]);
+        aperrs = cat(1,aperrs,inp.zlo_aperr(iwin));
+        nv = nv+1;
+    end
+    zlo_idx_2 = nv-1;
+end
 % Add other terms
 tidx = -1 ; assaidx = -1 ;
 codidx = -1 ; cssaidx = -1 ; cfracidx = -1 ; sfcprsidx = -1;
@@ -358,6 +404,23 @@ if inc_t
     aperrs = cat(1,aperrs,t_aperr);
     tidx = nv;
     nv = nv + 1;
+end
+
+ilsidx = [];
+
+if sum(inc_ils) > 0
+    if length(inc_ils) ~= length(ils_par_list)
+        error('Inc_ils has to be the same length as the number of ILS parmaters!')
+    end
+    for iils = 1:length(inc_ils)
+        if inc_ils(iils)
+            ilsidx = cat(1,ilsidx,nv);
+            varnames = cat(1,varnames,['ILS-',ils_par_list{iils}]);
+            aperrs = cat(1,aperrs,ils_aperr_struct. ...
+                (['ils_',ils_par_list{iils},'_aperr']));
+            nv = nv+1;
+        end
+    end
 end
 
 aodidxs = zeros(naerosol,1);
@@ -478,6 +541,14 @@ if inc_alb
     ywf(:,alb_idx_1:alb_idx_2) = albjac;
 end
 
+if inc_shift
+    ywf(:,shift_idx_1:shift_idx_2) = shiftjac;
+end
+
+if inc_zlo
+    ywf(:,zlo_idx_1:zlo_idx_2) = zlojac;
+end
+
 if tidx > 0
     ywf(:,tidx) = tjac;
 end
@@ -526,6 +597,16 @@ end
 if airglowidx > 0
     ywf(:,airglowidx) = airglowjac;
 end
+
+if sum(inc_ils) > 0
+    count = 0;
+    for iils = 1:length(inc_ils)
+        if inc_ils(iils)
+        count = count+1;
+        ywf(:,ilsidx(count)) = ils_jac_struct.(ils_jac_struct_fn{iils});
+        end
+    end
+end
 % Apply OE
 ywf = double(ywf);
 ywft = ywf';
@@ -561,6 +642,7 @@ outp.k = k;
 
 outp.xch4e_a = sqrt(k'*sa*k);
 xch4e_m = sqrt(k'*sn*k);
+% xch4e_s = sqrt(h'*ss(gasfidxs(1):(gasfidxs(2)-1),gasfidxs(1):(gasfidxs(2)-1))*h);
 xch4e_s = sqrt(k'*ss*k);
 xch4e_r = sqrt(k'*se*k);
 
@@ -607,6 +689,20 @@ end
 outp.xch4e_f_sfcprs = xch4e_f_sfcprs;
 outp.xch4e_i_sfcprs = xch4e_i_sfcprs;
 
+for ig = 2:(length(gasfidxs))
+    A_ue = ak(gasfidxs(1):(gasfidxs(2)-1),gasfidxs(ig));
+    tmp_s = A_ue * sa(gasfidxs(ig),gasfidxs(ig)) * A_ue';
+    errorstr = ['xch4e_i_',varnames{gasfidxs(ig)}];
+    outp.(errorstr) = sqrt(h'*tmp_s*h);
+end
+
+tmprange = alb_idx_1:(alb_idx_1+inp.nalb(1)+inp.nalb(2)-1);
+A_ue = ak(gasfidxs(1):(gasfidxs(2)-1),tmprange);
+tmp_s = A_ue * sa(tmprange,tmprange) * A_ue';
+errorstr = ['xch4e_i_albedo'];
+outp.(errorstr) = sqrt(h'*tmp_s*h);
+
+
 if inc_aod
     xch4e_f_aod = 0;
     A_ue = ak(gasfidxs(1):(gasfidxs(2)-1),aodidxs);
@@ -649,19 +745,37 @@ end
 outp.xch4e_f_aod_hfw = xch4e_f_aod_hfw;
 outp.xch4e_i_aod_hfw = xch4e_i_aod_hfw;
 
-if do_ils
+% if ils is not included, calculate ils forward model parameter error
+if sum(inc_ils) == 0
     for ifn = 1:length(ils_jac_struct_fn)
         tmp_s = contri * double(ils_jac_struct.(ils_jac_struct_fn{ifn}))...
             * ils_aperr_struct.(['ils_',ils_par_list{ifn},'_aperr'])^2 * ...
             double(ils_jac_struct.(ils_jac_struct_fn{ifn}))' * contri';
         outp.(['xch4e_f_ils_',ils_par_list{ifn}]) = sqrt(k'*tmp_s*k);
     end
-%     s_f_ils_fwhm = contri * double(ils_fwhm_jac) * ils_fwhm_aperr^2 * double(ils_fwhm_jac') * contri';
-%     outp.xch4e_f_ils_fwhm = sqrt(k'*s_f_ils_fwhm*k);
-%     s_f_ils_aw = contri * double(ils_aw_jac) * ils_aw_aperr^2 * double(ils_aw_jac') * contri';
-%     outp.xch4e_f_ils_aw = sqrt(k'*s_f_ils_aw*k);
-%     s_f_ils_k = contri * double(ils_k_jac) * ils_k_aperr^2 * double(ils_k_jac') * contri';
-%     outp.xch4e_f_ils_k = sqrt(k'*s_f_ils_k*k);
+else
+    count = 0;
+    for iils = 1:length(inc_ils)
+        if inc_ils(iils)
+            count = count+1;
+            A_ue = double(ak(gasfidxs(1):(gasfidxs(2)-1),ilsidx(count)));
+            tmp_s = A_ue ...
+            * ils_aperr_struct.(['ils_',ils_par_list{iils},'_aperr'])^2 * ...
+            A_ue';
+        outp.(['xch4e_i_ils_',ils_par_list{iils}]) = sqrt(h'*tmp_s*h);
+        else
+            tmp_s = contri * double(ils_jac_struct.(ils_jac_struct_fn{iils}))...
+            * ils_aperr_struct.(['ils_',ils_par_list{iils},'_aperr'])^2 * ...
+            double(ils_jac_struct.(ils_jac_struct_fn{iils}))' * contri';
+        outp.(['xch4e_f_ils_',ils_par_list{iils}]) = sqrt(k'*tmp_s*k);
+        end
+    end
+    %     s_f_ils_fwhm = contri * double(ils_fwhm_jac) * ils_fwhm_aperr^2 * double(ils_fwhm_jac') * contri';
+    %     outp.xch4e_f_ils_fwhm = sqrt(k'*s_f_ils_fwhm*k);
+    %     s_f_ils_aw = contri * double(ils_aw_jac) * ils_aw_aperr^2 * double(ils_aw_jac') * contri';
+    %     outp.xch4e_f_ils_aw = sqrt(k'*s_f_ils_aw*k);
+    %     s_f_ils_k = contri * double(ils_k_jac) * ils_k_aperr^2 * double(ils_k_jac') * contri';
+    %     outp.xch4e_f_ils_k = sqrt(k'*s_f_ils_k*k);
 end
 % sqrt(sum(sum(se(gasfidxs(1):gasfidxs(2)-1,gasfidxs(1):gasfidxs(2)-1))))/gastcol(1)
 
@@ -671,15 +785,23 @@ outp.ss = ss; outp.contri = contri;
 outp.sa = sa; outp.aperrs = aperrs;
 outp.ywf = ywf;
 
+outp.ils_aperr_struct = ils_aperr_struct;
+outp.ils_par_list = ils_par_list;
+
 outp.gasfidxs = gasfidxs;
 outp.alb_idx_1 = alb_idx_1; outp.alb_idx_2 = alb_idx_2;
 outp.tidx = tidx;
 outp.aodidxs = aodidxs;
+outp.aodhfwidxs = aodhfwidxs;
+outp.aodpkhidxs = aodpkhidxs;
 outp.assaidx = assaidx;
 outp.codidx = codidx;
 outp.cssaidx = cssaidx;
 outp.cfracidx = cfracidx;
 outp.sfcprsidx = sfcprsidx;
+outp.ilsidx = ilsidx;
+outp.shift_idx_1 = shift_idx_1; outp.shift_idx_2 = shift_idx_2;
+outp.zlo_idx_1 = zlo_idx_1; outp.zlo_idx_2 = zlo_idx_2;
 
 outp.gascoljac = gascoljac;
 outp.inc_prof = inc_prof;

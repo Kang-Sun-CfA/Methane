@@ -98,9 +98,15 @@ end
 outp.aerosols = aerosols;
 outp.sza = variable.Solarzenithangle;
 outp.vza = variable.Viewingzenithangle;
+if isfield(variable,'surfalb')
 outp.surfalb = variable.surfalb;
+else
+    outp.surfalb = variable.BRDF_f_isotr;
+    outp.BRDF_f_isotr = variable.BRDF_f_isotr;
+end
 outp.rad = variable.radiance;
-
+outp.SZA = variable.Solarzenithangle;
+outp.VZA = variable.Viewingzenithangle;
 % dlnI/dln O2_1D column
 if do_airglow
     lines = F_import_par(inp.O2par_path);
@@ -266,7 +272,7 @@ end
 if isfield(variable,'surfalb_jac')
 outp.surfalb_jac = variable.surfalb_jac./ variable.surfalb./outp.rad;
 else
-    outp.surfalb_jac = variable.BRDF_f_isotr_jac./ variable.surfalb./outp.rad;
+    outp.surfalb_jac = variable.BRDF_f_isotr_jac./ variable.BRDF_f_isotr./outp.rad;
 end
 outp.if_lnR = if_lnR;
 if ~if_lnR
