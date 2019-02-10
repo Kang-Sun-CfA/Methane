@@ -155,6 +155,7 @@ if do_airglow
     agspec = agspec(:);
     outp.rad = outp.rad+agspec*outp.O21D_col;
     outp.airglow_jac = agspec./outp.rad*outp.O21D_col;
+    outp.agspec = agspec;
 else
     outp.airglow_jac = 0*outp.rad;
 end
@@ -245,6 +246,8 @@ for i = 1:outp.ngas
     end
     % total VCD, normalized by gasnorm
     outp.([gases0{i},'_gastcol']) = outp.([gases0{i},'_gastcol'])/gasnorm.(gases0{i});
+    % output gas xsec, added for proxy work on 2019/02/09
+    outp.([gases0{i},'_gas_xsec']) = variable.([gases0{i},'_gas_xsec']);
 end
 % plot(outp.wave,outp.CH4_vmrscale_jac,outp.wave,outp.CH4_gascol_jac*outp.CH4_gastcol,'.')
 % dlnI/dT_shift
@@ -286,6 +289,7 @@ if ~if_lnR
         end
     end
 end
+outp.ods = variable.ods;
 
 function s1_low = F_conv_interp_n(w1,s1,fwhm,common_grid)
 % This function convolves s1 with a Gaussian fwhm, resample it to
