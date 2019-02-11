@@ -172,7 +172,7 @@ for iaod = 1:naod
             % plot(inp.w2,F_proxy_forward(coeff0,inp),'b',inp.w2,s2,'k',inp.w2,s2-R,'r')
             % coeff
             % plot(outp_O2.wave,sum(outp_O2.ods,2),outp_O2.wave,inp.H2O_od+inp.O2_od+inp.O4_od)
-            coeff_mat_CH4(1:length(coeff),iaod,ipeakz,imc) = coeff;
+            coeff_mat_O2(1:length(coeff),iaod,ipeakz,imc) = coeff;
             %%
             % prepare input for CH4 window
             w_start = 1606;
