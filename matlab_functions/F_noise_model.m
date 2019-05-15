@@ -2,6 +2,7 @@ function outpn = F_noise_model(inpn)
 % matlab function to calculate channel-by-channel snr. written by Kang Sun
 % on 2018/04/30
 % updated on 2018/05/09 to include dy, along track ifov
+% updated on 2019/05/04 to seperate optical efficiency and quantum yield
 
 if isfield(inpn,'snrdefine_rad')
     I = inpn.snrdefine_rad;
@@ -66,6 +67,14 @@ if ~exist('eta','var')
 % instrument efficiency
 eta = 0.65;
 end
+
+if ~isfield(inpn,'optical_efficiency')
+    optical_efficiency = eta;
+    quantum_yield = 1;
+else
+    optical_efficiency = inpn.optical_efficiency;
+    quantum_yield = inpn.quatnum_yield;
+end
 if isfield(inpn,'dx0')
     dx0 = inpn.dx0;
 else
@@ -82,7 +91,7 @@ n1 = dy0/7/dt;
 % number of x-track averaging
 n = dx0/dx;
 % signal
-S = I*A*dt*dlambda*Omega*eta;
+S = I*A*dt*dlambda*Omega*optical_efficiency;
 if isfield(inpn,'Nr')
     Nr = inpn.Nr;
 else
