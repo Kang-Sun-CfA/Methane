@@ -5,7 +5,7 @@ Created on Sun May 12 14:50:49 2019
 
 @author: kangsun
 
-python class handling GEOS FP for MethaneSAT
+python class handling GEOS FP
 """
 import datetime
 import numpy as np
@@ -117,7 +117,9 @@ def F_compute_aod( aername, aer_mcol, rh ):
 
 class geos(object):
     
-    def __init__(self,geos_dir,geos_constants_path='',west=-180.,east=180.,south=-90.,north=90.):
+    def __init__(self,geos_dir,geos_constants_path='',\
+                 west=-180.,east=180.,south=-90.,north=90.,\
+                 time_collection='inst3'):
         """
         initiate the geos object
         geos_dir:
@@ -126,7 +128,10 @@ class geos(object):
             absolute path to the .mat file containing geos fp constants, lat, lon, surface elevation
         west,east,north,south:
             boundaries to subset geos fp
+        time_collection:
+            choose from inst3, tavg1, tavg3
         created on 2019/05/12
+        updated on 2019/05/29 to be compatible with tavg collections
         """
         self.logger = logging.getLogger(__name__)
         self.logger.info('creating an instance of geos logger')
@@ -154,8 +159,17 @@ class geos(object):
         self.HS = HS0[np.ix_(int_lon,int_lat)]
         self.nlat = len(self.lat)
         self.nlon = len(self.lon)
-        step_hour = 3
+        if time_collection == 'inst3':
+            step_hour = 3
+            daily_start_time = datetime.time(hour=0,minute=0)
+        elif time_collection == 'tavg1':
+            step_hour = 1
+            daily_start_time = datetime.time(hour=0,minute=30)
+        elif time_collection == 'tavg3':
+            step_hour = 3
+            daily_start_time = datetime.time(hour=1,minute=30)
         self.step_hour = step_hour
+        self.daily_start_time = daily_start_time
         self.nlayer = 72
         self.nlayer0 = 72
         self.nlat0 = 721
@@ -167,24 +181,41 @@ class geos(object):
                  end_hour=0,end_minute=0,end_second=0):
         """
         reset start and end time.
-        created on 2019/05/12
         also create geos time stamps covering the time bounds
+        created on 2019/05/12
+        updated on 2019/05/29 to be compatible with tavg collections
         """
         self.start_python_datetime = datetime.datetime(start_year,start_month,start_day,\
                                                   start_hour,start_minute,start_second)
         self.end_python_datetime = datetime.datetime(end_year,end_month,end_day,\
                                                 end_hour,end_minute,end_second)
         step_hour = self.step_hour
-        # extend the start/end datetime to the closest step_hour intervals (3 hour for geos fp)
-        geos_start_hour = start_hour-start_hour%step_hour
-        geos_start_datetime = datetime.datetime(year=start_year,month=start_month,day=start_day,hour=geos_start_hour)
-        if end_hour >= 24-step_hour:
-            geos_end_hour = 0
-            geos_end_datetime = datetime.datetime(year=end_year,month=end_month,day=end_day,hour=geos_end_hour) +datetime.timedelta(days=1)
-        else:
-            geos_end_hour = (step_hour-(end_hour+1)%step_hour)%step_hour+end_hour+1
-            geos_end_datetime = datetime.datetime(year=end_year,month=end_month,day=end_day,hour=geos_end_hour)
-        nstep = (geos_end_datetime-geos_start_datetime).total_seconds()/3600/step_hour
+        daily_start_time = self.daily_start_time
+        # extend the start/end datetime to the closest step_hour intervals
+        t_array0 = datetime.datetime.combine(datetime.date(start_year,start_month,start_day),\
+        daily_start_time)-datetime.timedelta(hours=step_hour)
+        t_array = np.array([t_array0+datetime.timedelta(hours=int(step_hour)*i) for i in range(int(24/step_hour+2))])
+        tn_array = np.array([(self.start_python_datetime-dt).total_seconds() for dt in t_array])
+        geos_start_datetime = t_array[tn_array >= 0.][-1]
+        
+        t_array0 = datetime.datetime.combine(datetime.date(end_year,end_month,end_day),\
+        daily_start_time)-datetime.timedelta(hours=step_hour)
+        t_array = np.array([t_array0+datetime.timedelta(hours=int(step_hour)*i) for i in range(int(24/step_hour+2))])
+        tn_array = np.array([(self.end_python_datetime-dt).total_seconds() for dt in t_array])
+        geos_end_datetime = t_array[tn_array <= 0.][0]
+        
+#        geos_start_hour = start_hour-start_hour%step_hour
+#        geos_start_datetime = datetime.datetime(year=start_year,month=start_month,day=start_day,hour=geos_start_hour)
+#        if end_hour > 24-step_hour or (end_hour == 24-step_hour and (end_minute > 0 or end_second > 0)):
+#            geos_end_hour = 0
+#            geos_end_datetime = datetime.datetime(year=end_year,month=end_month,day=end_day,hour=geos_end_hour) +datetime.timedelta(days=1)
+#        elif end_hour%step_hour == 0 and end_minute == 0 and end_second == 0:
+#            geos_end_hour = end_hour
+#            geos_end_datetime = datetime.datetime(year=end_year,month=end_month,day=end_day,hour=geos_end_hour)
+#        else:
+#            geos_end_hour = (step_hour-(end_hour+1)%step_hour)%step_hour+end_hour+1
+#            geos_end_datetime = datetime.datetime(year=end_year,month=end_month,day=end_day,hour=geos_end_hour)
+        nstep = (geos_end_datetime-geos_start_datetime).total_seconds()/3600/step_hour+1
         self.geos_start_datetime = geos_start_datetime
         self.geos_end_datetime = geos_end_datetime
         self.nstep = int(nstep)
@@ -194,6 +225,7 @@ class geos(object):
         self.logger.info('extended time from '+\
                          self.geos_start_datetime.strftime('%Y-%m-%dT%H:%M:%SZ')+
                          ' to '+self.geos_end_datetime.strftime('%Y-%m-%dT%H:%M:%SZ'))
+        self.logger.info('there will be %d'%nstep+' geos time steps')
         
         
     def F_download_geos(self,file_collection_names=['inst3_2d_asm_Nx'],\
@@ -206,22 +238,31 @@ class geos(object):
             see https://gmao.gsfc.nasa.gov/GMAO_products/documents/GEOS_5_FP_File_Specification_ON4v1_2.pdf
             for a complete list
         created on 2019/05/12
+        updated on 2019/05/29 to be compatible with tavg collections
         """
         geos_url = ' https://portal.nccs.nasa.gov/datashare/gmao_ops/pub/fp/das/'
         cwd = os.getcwd()
         os.chdir(self.geos_dir)
-        start_date = self.start_python_datetime.date()
-        end_date = self.end_python_datetime.date()
-        days = (end_date-start_date).days+1
-        DATES = [start_date + datetime.timedelta(days=d) for d in range(days)]
-        for DATE in DATES:
+        nstep = self.nstep
+        for istep in range(nstep):
+            file_datetime = self.geos_start_datetime+datetime.timedelta(hours=self.step_hour*istep)
             for file_collection_name in file_collection_names:
-                for ihour in range(download_start_hour,download_end_hour,3):
-                    fn = 'GEOS.fp.asm.'+file_collection_name+'.'+DATE.strftime("%Y%m%d")+\
-                    '_'+"{:0>2d}".format(ihour)+'00.V01.nc4'
-                    runstr = 'wget -r -np -nH --cut-dirs=5 '+geos_url+\
-                    'Y'+DATE.strftime("%Y")+'/M'+DATE.strftime("%m")+'/D'+DATE.strftime("%d")+'/'+fn
-                    os.system(runstr)
+                fn = 'GEOS.fp.asm.'+file_collection_name+'.'+file_datetime.strftime("%Y%m%d_%H%M")+'.V01.nc4'
+                runstr = 'wget -r -np -nH --cut-dirs=5 '+geos_url+\
+                    'Y'+file_datetime.strftime("%Y")+'/M'+file_datetime.strftime("%m")+'/D'+file_datetime.strftime("%d")+'/'+fn
+                os.system(runstr)
+#        start_date = self.start_python_datetime.date()
+#        end_date = self.end_python_datetime.date()
+#        days = (end_date-start_date).days+1
+#        DATES = [start_date + datetime.timedelta(days=d) for d in range(days)]
+#        for DATE in DATES:
+#            for file_collection_name in file_collection_names:
+#                for ihour in range(download_start_hour,download_end_hour,3):
+#                    fn = 'GEOS.fp.asm.'+file_collection_name+'.'+DATE.strftime("%Y%m%d")+\
+#                    '_'+"{:0>2d}".format(ihour)+'00.V01.nc4'
+#                    runstr = 'wget -r -np -nH --cut-dirs=5 '+geos_url+\
+#                    'Y'+DATE.strftime("%Y")+'/M'+DATE.strftime("%m")+'/D'+DATE.strftime("%d")+'/'+fn
+#                    os.system(runstr)
         os.chdir(cwd)
     
     def F_load_geos(self,file_collection_names=['inst3_2d_asm_Nx','inst3_3d_asm_Nv'], \
@@ -314,7 +355,7 @@ class geos(object):
             self.matlab_datenum[istep] = file_datenum
             
             for i in range(len(file_collection_names)):
-                file_path = os.path.join(file_dir,'GEOS.fp.asm.'+file_collection_names[i]+file_datetime.strftime('.%Y%m%d_%H')+'00.V01.nc4')
+                file_path = os.path.join(file_dir,'GEOS.fp.asm.'+file_collection_names[i]+file_datetime.strftime('.%Y%m%d_%H%M')+'.V01.nc4')
                 self.logger.info('loading '+file_path)
                 if i == 0:
                     self.tai93[istep] = F_read_geos_nc4(file_path,['TAITIME'])['TAITIME']
@@ -400,6 +441,34 @@ class geos(object):
                 
         self.geos_data = geos_data
     
+    def F_save_geos_data2mat(self,if_delete_nc=False):
+        """
+        save geos_data loaded by F_load_geos to mat file
+        created on 2019/05/25
+        """
+        if self.nstep != 1:
+            self.logger.error('nstep = '+'%d'%self.nstep+', this function only works for single time step (start=end)!')
+            return
+        from scipy.io import savemat
+        file_datetime = self.geos_start_datetime
+        file_dir = os.path.join(self.geos_dir,file_datetime.strftime('Y%Y'),\
+                                   file_datetime.strftime('M%m'),\
+                                   file_datetime.strftime('D%d'))
+        mat_fn = os.path.join(file_dir,'subset_'+file_datetime.strftime('%Y%m%d_%H%M')+'.mat')
+        save_dict = self.geos_data
+        save_dict = {k:np.squeeze(v) for (k,v) in save_dict.items()}
+        save_dict['lon'] = self.lon.flatten()
+        save_dict['lat'] = self.lat.flatten()
+        savemat(mat_fn,save_dict)
+        if not if_delete_nc:
+            return
+        for i in range(len(self.file_collection_names)):
+            file_path = os.path.join(file_dir,'GEOS.fp.asm.'+\
+                                     self.file_collection_names[i]+\
+                                     file_datetime.strftime('.%Y%m%d_%H%M')+'.V01.nc4')
+            self.logger.info('deleting '+file_path)
+            os.remove(file_path)
+        
     def F_interp_geos(self,sounding_lon,sounding_lat,sounding_tai93=None,sounding_datenum=None,\
                       sounding_dem=None,interp_var=['PS']):
         """

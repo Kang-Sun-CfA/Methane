@@ -234,13 +234,13 @@ for iwin = 1:length(outp_d)
     aodhfwjac = cat(1,aodhfwjac,tmp_aod_hfw_jac);
     
     if inc_shift
-        tmp_shift_jac = zeros(outp_d(iwin).nw,2);
+        tmp_shift_jac = zeros(outp_d(iwin).nw,length(outp_d));
         tmp_shift_jac(:,iwin) = outp_d(iwin).shift_jac;
         shiftjac = cat(1,shiftjac,tmp_shift_jac);
     end
     
     if inc_zlo
-        tmp_zlo_jac = zeros(outp_d(iwin).nw,2);
+        tmp_zlo_jac = zeros(outp_d(iwin).nw,length(outp_d));
         tmp_zlo_jac(:,iwin) = outp_d(iwin).zlo_jac;
         zlojac = cat(1,zlojac,tmp_zlo_jac);
     end
@@ -696,7 +696,7 @@ for ig = 2:(length(gasfidxs))
     outp.(errorstr) = sqrt(h'*tmp_s*h);
 end
 
-tmprange = alb_idx_1:(alb_idx_1+inp.nalb(1)+inp.nalb(2)-1);
+tmprange = alb_idx_1:(alb_idx_1+sum(inp.nalb)-1);
 A_ue = ak(gasfidxs(1):(gasfidxs(2)-1),tmprange);
 tmp_s = A_ue * sa(tmprange,tmprange) * A_ue';
 errorstr = ['xch4e_i_albedo'];

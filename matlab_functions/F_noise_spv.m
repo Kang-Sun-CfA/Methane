@@ -118,7 +118,7 @@ Nd = Nd_per_s * dt;
 % end
 %         
 % signal
-S = I*A*dt*dl*Omega*eta;
+S = I*A*dt*dl*Omega.*eta;
 % noise
 N = sqrt(Nr^2+Nd+S);
 
