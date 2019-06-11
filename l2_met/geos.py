@@ -149,11 +149,12 @@ class geos(object):
         lat0 = constants['lat']
         lon0 = constants['lon']
         tmplon = lon0-west
+        tmplon[tmplon<0] = tmplon[tmplon<0]+360
         HS0 = constants['HS']
         int_lat = np.squeeze((lat0 >= south) & (lat0 <= north))
         int_lon = np.squeeze((tmplon >= 0) & (tmplon <= east-west))
         self.lat = np.squeeze(lat0[int_lat])
-        self.lon = np.squeeze(lon0[int_lon])
+        self.lon = np.squeeze(tmplon[int_lon]+west)
         self.int_lon = int_lon
         self.int_lat = int_lat
         self.HS = HS0[np.ix_(int_lon,int_lat)]
@@ -439,7 +440,9 @@ class geos(object):
                     # Compute AOD
                     geos_data['ODU'][...,istep] = F_compute_dust_aod(dst_mcol)
                 
-        self.geos_data = geos_data
+        idx = np.argsort(self.lon)
+        self.lon = np.sort(self.lon)
+        self.geos_data =  {k:v[idx,] for (k,v) in geos_data.items()}
     
     def F_save_geos_data2mat(self,if_delete_nc=False):
         """
