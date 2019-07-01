@@ -444,10 +444,15 @@ class geos(object):
         self.lon = np.sort(self.lon)
         self.geos_data =  {k:v[idx,] for (k,v) in geos_data.items()}
     
-    def F_save_geos_data2mat(self,if_delete_nc=False):
+    def F_save_geos_data2mat(self,if_delete_nc=False,fn_header='subset'):
         """
         save geos_data loaded by F_load_geos to mat file
+        if_delete_nc:
+            true if delete geos netcdf files
+        fn_header:
+            header string of the subsetted mat files
         created on 2019/05/25
+        updated on 2019/06/20 to include file name header
         """
         if self.nstep != 1:
             self.logger.error('nstep = '+'%d'%self.nstep+', this function only works for single time step (start=end)!')
@@ -457,11 +462,13 @@ class geos(object):
         file_dir = os.path.join(self.geos_dir,file_datetime.strftime('Y%Y'),\
                                    file_datetime.strftime('M%m'),\
                                    file_datetime.strftime('D%d'))
-        mat_fn = os.path.join(file_dir,'subset_'+file_datetime.strftime('%Y%m%d_%H%M')+'.mat')
+        mat_fn = os.path.join(file_dir,fn_header+'_'+file_datetime.strftime('%Y%m%d_%H%M')+'.mat')
         save_dict = self.geos_data
         save_dict = {k:np.squeeze(v) for (k,v) in save_dict.items()}
         save_dict['lon'] = self.lon.flatten()
         save_dict['lat'] = self.lat.flatten()
+        # save in single precision to save space
+        save_dict = {k:np.float32(v) for (k,v) in save_dict.items()}
         savemat(mat_fn,save_dict)
         if not if_delete_nc:
             return
