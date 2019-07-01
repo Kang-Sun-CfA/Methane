@@ -238,6 +238,10 @@ class geos(object):
             a list of geos fp collection names, such as ['inst3_3d_asm_Nv','inst3_3d_chm_Nv','inst3_2d_asm_Nx']
             see https://gmao.gsfc.nasa.gov/GMAO_products/documents/GEOS_5_FP_File_Specification_ON4v1_2.pdf
             for a complete list
+        download_start_hour:
+            only hours larger than that will be downloaded
+        download_end_hour:
+            only hours smaller than that will be downloaded
         created on 2019/05/12
         updated on 2019/05/29 to be compatible with tavg collections
         """
@@ -247,6 +251,9 @@ class geos(object):
         nstep = self.nstep
         for istep in range(nstep):
             file_datetime = self.geos_start_datetime+datetime.timedelta(hours=self.step_hour*istep)
+            file_hour = file_datetime.hour+file_datetime.minute/60.+file_datetime.second/3600.
+            if file_hour < download_start_hour or file_hour > download_end_hour:
+                continue
             for file_collection_name in file_collection_names:
                 fn = 'GEOS.fp.asm.'+file_collection_name+'.'+file_datetime.strftime("%Y%m%d_%H%M")+'.V01.nc4'
                 runstr = 'wget -r -np -nH --cut-dirs=5 '+geos_url+\
