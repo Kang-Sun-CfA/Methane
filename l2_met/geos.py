@@ -230,7 +230,7 @@ class geos(object):
         
         
     def F_download_geos(self,file_collection_names=['inst3_2d_asm_Nx'],\
-                        download_start_hour=0,download_end_hour=24):
+                        download_start_hour=-3.,download_end_hour=27.):
         """
         download geos fp data from https://portal.nccs.nasa.gov/datashare/gmao_ops/pub/fp/das/
         use wget. may add/switch to request to be compatible with PC
