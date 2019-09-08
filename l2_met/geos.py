@@ -13,7 +13,7 @@ import os
 import logging
 import scipy.io as sio
 from netCDF4 import Dataset
-from scipy.interpolate import RegularGridInterpolator
+from scipy.interpolate import RegularGridInterpolator, interp1d
 
 # dry air gas constant
 R_d = 287.058
@@ -175,6 +175,8 @@ class geos(object):
         self.nlayer0 = 72
         self.nlat0 = 721
         self.nlon0 = 1152
+        # model top pressure in Pa
+        self.ptop = 1
             
     def F_set_time_bound(self,start_year=1995,start_month=1,start_day=1,\
                  start_hour=0,start_minute=0,start_second=0,\
@@ -487,7 +489,7 @@ class geos(object):
             os.remove(file_path)
         
     def F_interp_geos(self,sounding_lon,sounding_lat,sounding_tai93=None,sounding_datenum=None,\
-                      sounding_dem=None,interp_var=['PS']):
+                      sounding_dem=None,interp_var=['PS'],Ap=None,Bp=None):
         """
         resample from geos_data at sounding locations and time
         souding_lon:
@@ -528,6 +530,7 @@ class geos(object):
         sounding_data['sounding_dem'] = sounding_dem
         sounding_data['sounding_HS'] = sounding_HS
         pts_3d = (sounding_lon,sounding_lat,sounding_time)
+        data3d = []
         for var in interp_var:
             if var not in self.geos_data.keys():
                 self.logger.warning(var+' is not available in your loaded geos data!')
@@ -579,6 +582,48 @@ class geos(object):
                 my_interpolating_function = \
                 RegularGridInterpolator((self.lon,self.lat,lev,geos_time),self.geos_data[var])
                 sounding_data['sounding_'+var] = my_interpolating_function((lon_lev,lat_lev,lev_lev,time_lev))
+                data3d = np.concatenate((data3d,['sounding_'+var]))
+        self.data3d = data3d
+        s = slice(None)
+        if (Ap is not None) and (Bp is not None):
+            self.logger.info('Interpreting 3D fields to custom eta grids')
+            self.logger.info('nlayer = %d'%(len(Ap)-1))
+            nlevel1 = len(Ap)
+            nlayer1 = len(Ap)-1
+            npixel = len(np.ravel(sounding_data['sounding_psurf'],order='F'))
+            pixel_shape = sounding_data['sounding_psurf'].shape
+            
+            eta_data = {}
+            eta_data['pedge'] = np.zeros((pixel_shape+(nlevel1,)))
+            eta_data['Tedge'] = np.zeros((pixel_shape+(nlevel1,)))
+            eta_data['pmid'] = np.zeros((pixel_shape+(nlayer1,)))
+            for d3d in data3d:
+                if d3d == 'sounding_DELP':
+                    self.logger.warning('DELP cannot be interpolated directly. skipping for now...')
+                    continue
+                eta_data[d3d] = np.zeros((pixel_shape+(nlayer1,)))
+            for ip in range(npixel):
+                pixel_idx = np.unravel_index(ip,pixel_shape,order='F')
+                pedge = sounding_data['sounding_psurf'][pixel_idx]*Bp+Ap
+                pmid = (pedge[0:-1]+pedge[1:])/2
+                full_idx = pixel_idx+(s,)
+                eta_data['pedge'][full_idx] = pedge
+                eta_data['pmid'][full_idx] = pmid
+                PL = sounding_data['sounding_PL'][full_idx]
+                for d3d in data3d:
+                    if d3d == 'sounding_T':
+                        T = sounding_data['sounding_T'][full_idx]
+                        f_interp1d = interp1d(PL,T,fill_value="extrapolate")
+                        eta_data['Tedge'][full_idx] = f_interp1d(pedge)
+                    elif d3d == 'sounding_DELP':
+                        continue
+                    full_prof = sounding_data[d3d][full_idx]
+                    f_interp1d = interp1d(PL,full_prof,fill_value="extrapolate")
+                    eta_data[d3d][full_idx] = f_interp1d(pmid)
+                
+        
+            
+        self.eta_data = eta_data
         self.sounding_data = sounding_data
 #    def F_regularize_geos3d(self):
 #        

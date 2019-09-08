@@ -9,7 +9,7 @@ import numpy as np
 # conda install -c conda-forge opencv 
 #import cv2
 # conda install -c scitools/label/archive shapely
-from shapely.geometry import Polygon
+#from shapely.geometry import Polygon
 from netCDF4 import Dataset
 import os
 import glob
