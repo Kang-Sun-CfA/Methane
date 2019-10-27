@@ -15,6 +15,48 @@ import os
 import glob
 import logging
 
+def F_NED2nc(dem_dir,if_delete_img=False):
+    """
+    converting NED img file to netcdf. 
+    dem_dir:
+        directory containing DEM data
+    required packages:
+        gdal, netcdf4
+    """
+    import gdal
+    gdal.UseExceptions()
+    img_list = glob.glob(os.path.join(dem_dir,'USGS_NED*.img'))
+    for fn in img_list:
+        #print(fn)
+        f = gdal.Open(fn, gdal.GA_ReadOnly)
+        f_width = f.RasterXSize
+        f_height = f.RasterYSize
+        #f_nbands = f.RasterCount
+        
+        f_data = f.ReadAsArray()
+        f_trans = f.GetGeoTransform()
+        
+        xres = f_trans[1]
+        yres = f_trans[5]
+        xorig = f_trans[0]
+        yorig = f_trans[3]
+        xgrid = xorig+np.arange(0,f_width)*xres
+        ygrid = yorig+np.arange(0,f_height)*yres
+        #plt.pcolormesh(xgrid[0:3000],ygrid[0:5000],np.float16(f_data[0:5000,0:3000]))
+        f.FlushCache
+        nc_fn = os.path.splitext(fn)[0]+'.nc'
+        nc = Dataset(os.path.join(dem_dir,nc_fn),'w',format='NETCDF4_CLASSIC')
+        nc.description = 'netcdf file saved from '+fn
+        nc.createDimension('lon',len(xgrid))
+        nc.createDimension('lat',len(ygrid))
+        lon = nc.createVariable('xgrid','f8',('lon'))
+        lat = nc.createVariable('ygrid','f8',('lat'))
+        elev = nc.createVariable('z','f4',('lat','lon'))
+        lon[:] = xgrid
+        lat[:] = ygrid
+        elev[:] = f_data
+        nc.close()
+
 def F_geotiff2nc(dem_dir,if_delete_tif=False):
     """
     converting geotiff file to netcdf. GMTED2010 is supported
@@ -91,6 +133,61 @@ class dem(object):
         self.west = west-lon_margin
         self.east = east+lon_margin
         self.sounding_data = sounding_data
+    
+    def F_load_ned(self):
+        """
+        load NED data based on the latlon bounds of sounding locations
+        """
+        west = self.west
+        east = self.east
+        south = self.south
+        north = self.north
+        lon_bound = np.arange(-106,-104)
+        lat_bound = np.arange(40,42)
+        lat_idx_start = np.argmax(lat_bound-south >= 0)-1
+        lat_idx_end = np.argmax(lat_bound-north >= 0)-1
+        lon_idx_start = np.argmax(lon_bound-west >= 0)-1
+        lon_idx_end = np.argmax(lon_bound-east >= 0)-1
+        dem_flist = []
+        xgrid_all = []
+        ygrid_all = []
+        z_all = [[]]
+        for lat_idx in range(lat_idx_start,lat_idx_end+1):
+            for lon_idx in range(lon_idx_start,lon_idx_end+1):
+                if lat_bound[lat_idx] < 0:
+                    lat_str = 's'+'%02d'%(np.abs(lat_bound[lat_idx]))
+                else:
+                    lat_str = 'n'+'%02d'%(np.abs(lat_bound[lat_idx]))
+                if lon_bound[lon_idx] < 0:
+                    lon_str = 'w'+'%03d'%(np.abs(lon_bound[lon_idx]))
+                else:
+                    lon_str = 'e'+'%03d'%(np.abs(lon_bound[lon_idx]))
+                dem_file = glob.glob(os.path.join(self.dem_dir,'USGS_NED_13_'+lat_str+lon_str+'_IMG.nc'))
+#                self.dem_file = dem_file
+                nc = Dataset(dem_file[0])
+                xgrid = np.sort(nc.variables['xgrid'])
+                if lat_idx == lat_idx_start:
+                    xgrid_all = np.concatenate((xgrid_all,xgrid))
+                ygrid = np.sort(nc.variables['ygrid'])
+                if lon_idx == lon_idx_start:
+                    ygrid_all = np.concatenate((ygrid_all,ygrid))
+                z = nc.variables['z'][np.argsort(nc.variables['ygrid']),
+                                np.argsort(nc.variables['xgrid'])]
+                if lon_idx == lon_idx_start:
+                    z_row = z
+                else:
+                    z_row = np.hstack((z_row,z))
+                dem_flist = dem_flist+dem_file
+            if lat_idx == lat_idx_start:
+                z_all = z_row
+            else:
+                z_all = np.vstack((z_all,z_row))
+        self.dem_flist = dem_flist
+        xint = (xgrid_all >= west) & (xgrid_all <= east)
+        yint = (ygrid_all >= south) & (ygrid_all <= north)
+        self.xgrid = xgrid_all[xint]
+        self.ygrid = ygrid_all[yint]
+        self.z = z_all[np.ix_(yint,xint)]
     
     def F_load_gmted(self):
         """
