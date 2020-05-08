@@ -15,6 +15,13 @@ from netCDF4 import Dataset
 import pandas as pd
 from scipy.interpolate import RegularGridInterpolator
 
+def datedev_py(matlab_datenum):
+    """
+    convert matlab datenum double to python datetime object
+    """
+    python_datetime = datetime.datetime.fromordinal(int(matlab_datenum)) + datetime.timedelta(days=matlab_datenum%1) - datetime.timedelta(days = 366)
+    return python_datetime
+
 def F_ncread_selective(fn,varnames):
     """
     very basic netcdf reader, similar to F_ncread_selective.m
@@ -39,7 +46,7 @@ class amdar(object):
                  start_year=2018,start_month=8,start_day=1,start_hour=0,
                  end_year=2018,end_month=8,end_day=31,end_hour=23,
                  daily_start_local_hour=13,daily_end_local_hour=13,
-                 airports_info_path='DEM_airports.csv'):
+                 airports_info_path=''):
         """
         initialize the amdar object
         start/end times: 
@@ -54,7 +61,11 @@ class amdar(object):
         """
         self.logger = logging.getLogger(__name__)
         self.logger.info('creating an instance of amdar logger')
-        self.airports_info = pd.read_csv(airports_info_path)
+        if not airports_info_path:
+            self.airports_info = pd.read_csv(airports_info_path)
+        else:
+            self.airports_info = []
+            self.logger.info('airports information is not provided. amdar-related functions may not work')
         self.start_datetime = datetime.datetime(start_year,start_month,start_day,
                                            start_hour,0,0)
         self.end_datetime = datetime.datetime(end_year,end_month,end_day,
@@ -230,7 +241,104 @@ class amdar(object):
         self.era_map = era_map
         self.era_lon = nc_out['longitude']
         self.era_lat = nc_out['latitude']
+       
+    def F_predict_pblh_era5_map(self, RFmodel_path, variables=[]):
+        """
+        author: Shiqi Tao
+        estimate pblh using existing RF (random forest) model and predictors
+        RFmodel_path:
+            path to RF regressor object saved as pickle file
+        variables:
+            a list of predictor variables, each variable should be a flattened
+            1d array. example:
+            [[var05['blh'].flatten(),var_15['blh'].flatten(),var_35['blh'].flatten(),var05['zust'].flatten(),var05['ssr'].flatten(),var05['sshf'].flatten()]]
+        """
+        import pickle
+        if len(variables) == 0:
+            self.logger.error('No variable input')
+            return
+        predictors = np.concatenate(variables,axis=0).T
+        RF_pblh = pickle.load(open(RFmodel_path, 'rb'))
+        y_predict = RF_pblh.predict(predictors)
+        PBLH_estimated = y_predict.reshape(self.era_lat.shape[0],self.era_lon.shape[0])
+        return PBLH_estimated
         
+    def F_interp_era5_amdar(self,sounding_lon,sounding_lat,sounding_datenum,\
+                            era5_dir,\
+                            era5_fields=['blh','zust','ssr','sshf'],\
+                            fn_header='CONUS',
+                            lag_hour=[0,-2,-4]):
+        """
+        sample a field from era5 data in .nc format at coordinates sounding_lon, sounding_lat, and
+        time sounding_datenum. based on F_interp_era5 in popy. added lag_hour
+        to faciliate random forest pblh model
+        sounding_lon:
+            longitude for interpolation
+        sounding_lat:
+            latitude for interpolation
+        sounding_datenum:
+            time for interpolation in matlab datenum double format, in !!!UTC!!!
+        era5_dir:
+            directory where subset era5 data in .nc are saved
+        era5_fields:
+            variables to interpolate from era5, only 2d fields are supported
+        fn_header:
+            in general should denote domain location of era5 data
+        lag_hour:
+            if sounding is 17 utc, lag hour 0 samples era5 at 15 utc, lag hour
+            -2 samples era5 at 13 utc
+        """
+        start_datenum = np.amin(sounding_datenum)
+        end_datenum = np.amax(sounding_datenum)
+        start_date = datedev_py(start_datenum).date()
+        
+        end_date = datedev_py(end_datenum).date()
+        days = (end_date-start_date).days+1
+        DATES = [start_date + datetime.timedelta(days=d) for d in range(days)]
+        era5_data = {}
+        iday = 0
+        for DATE in DATES:
+            fn = os.path.join(era5_dir,DATE.strftime('Y%Y'),\
+                                       DATE.strftime('M%m'),\
+                                       DATE.strftime('D%d'),\
+                                       fn_header+'_2D_'+DATE.strftime('%Y%m%d')+'.nc')
+            if not era5_data:
+                nc_out = F_ncread_selective(fn,np.concatenate(
+                        (era5_fields,['latitude','longitude','time'])))
+                era5_data['lon'] = nc_out['longitude']
+                era5_data['lat'] = nc_out['latitude'][::-1]
+                # how many hours are there in each daily file? have to be the same 
+                nhour = len(nc_out['time'])
+                era5_data['datenum'] = np.zeros((nhour*(days)),dtype=np.float64)
+                # era5 time is defined as 'hours since 1900-01-01 00:00:00.0'
+                era5_data['datenum'][iday*nhour:((iday+1)*nhour)] = nc_out['time']/24.+693962.
+                for field in era5_fields:
+                    era5_data[field] = np.zeros((len(era5_data['lon']),len(era5_data['lat']),nhour*(days)))
+                    if len(nc_out[field].shape) != 3:
+                        self.logger.warning('Warning!!! Anomaly in the dimension of ERA5 fields.')
+                        self.logger.warning('Tentatively taking only the first element of the second dimension')
+                        nc_out[field] = nc_out[field][:,0,...].squeeze()
+                    # was read in as 3-d array in time, lat, lon; transpose to lon, lat, time
+                    era5_data[field][...,iday*nhour:((iday+1)*nhour)] = nc_out[field].transpose((2,1,0))[:,::-1,:]
+            else:
+                nc_out = F_ncread_selective(fn,np.concatenate((era5_fields,['time'])))
+                # era5 time is defined as 'hours since 1900-01-01 00:00:00.0'
+                era5_data['datenum'][iday*nhour:((iday+1)*nhour)] = nc_out['time']/24.+693962.
+                for field in era5_fields:
+                    # was read in as 3-d array in time, lat, lon; transpose to lon, lat, time
+                    era5_data[field][...,iday*nhour:((iday+1)*nhour)] = nc_out[field].transpose((2,1,0))[:,::-1,:]
+            # increment iday
+            iday = iday+1
+        
+        sounding_interp = {}
+        for field in era5_fields:
+            f = RegularGridInterpolator((era5_data['lon'],era5_data['lat'],era5_data['datenum']),\
+                                        era5_data[field],bounds_error=False,fill_value=np.nan)
+            for lag in lag_hour:
+                fieldname = field+'%s'%lag
+                sounding_interp[fieldname] = f((sounding_lon,sounding_lat,sounding_datenum+lag/24))
+        return sounding_interp
+    
     def F_load_era5(self,era5_dir,
                         era5_fields=['blh','sp','zust','ishf','ie','p83.162','p84.162'],
                         fn_header='CONUS',
