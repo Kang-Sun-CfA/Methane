@@ -242,7 +242,7 @@ class amdar(object):
         self.era_lon = nc_out['longitude']
         self.era_lat = nc_out['latitude']
        
-    def F_predict_pblh_era5_map(self, RFmodel_path, variables=[]):
+    def F_predict_pblh(self, RFmodel_path, variables=[]):
         """
         author: Shiqi Tao
         estimate pblh using existing RF (random forest) model and predictors
