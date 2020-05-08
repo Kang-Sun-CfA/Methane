@@ -260,8 +260,8 @@ class amdar(object):
         predictors = np.concatenate(variables,axis=0).T
         RF_pblh = pickle.load(open(RFmodel_path, 'rb'))
         y_predict = RF_pblh.predict(predictors)
-        PBLH_estimated = y_predict.reshape(self.era_lat.shape[0],self.era_lon.shape[0])
-        return PBLH_estimated
+        #PBLH_estimated = y_predict.reshape(self.era_lat.shape[0],self.era_lon.shape[0])
+        return y_predict
         
     def F_interp_era5_amdar(self,sounding_lon,sounding_lat,sounding_datenum,\
                             era5_dir,\
