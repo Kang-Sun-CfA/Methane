@@ -27,7 +27,7 @@ class mergedFrame():
     Key functions are fitting a 2d gaussian to identify peak column/row and plotting
     the merged frame
     """
-    def __init__(self,frames,wv,whichBand='O2'):
+    def __init__(self,frames,wv,whichBand):
         """
         build the merged frame using multiple exposures
         frames:
