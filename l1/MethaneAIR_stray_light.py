@@ -27,7 +27,7 @@ class mergedFrame():
     Key functions are fitting a 2d gaussian to identify peak column/row and plotting
     the merged frame
     """
-    def __init__(self,frames,wv,whichBand):
+    def __init__(self,frames,wv):
         """
         build the merged frame using multiple exposures
         frames:
@@ -35,17 +35,12 @@ class mergedFrame():
             from the longest exposure
         wv:
             wavelength in nm for the merged frames
-        whichBand:
-            'CH4' or 'O2'
         """
         for i in range(1,len(frames)):
             if i == 1:
                 data = np.ma.where(np.ma.getmask(frames[0]),frames[1],frames[0])
             else:
                 data = np.ma.where(np.ma.getmask(data),frames[i],data)
-        # flip row order if it is O2 camera
-        if whichBand == 'O2':
-            data = data[::-1,:]
         self.mergedFrameData = data
         [rCenter,cCenter] = np.unravel_index(np.argmax(data),data.shape)
         self.rCenterPrior = rCenter;self.cCenterPrior = cCenter;
