@@ -223,9 +223,13 @@ class MethaneAIR_L1(object):
         self.logger.info('loading dark seq file '+darkFramePath)
         (Data,Meta,Seq) = ReadSeq(darkFramePath)
         Data = np.transpose(Data,(2,1,0))
-        badPixelMap3D = np.repeat(self.badPixelMap[...,np.newaxis],Seq.NumFrames,axis=2)
-        darkData = np.nanmean(np.ma.masked_where(badPixelMap3D!=0,Data),axis=2)
-        darkStd = np.nanstd(np.ma.masked_where(badPixelMap3D!=0,Data),axis=2)
+#        badPixelMap3D = np.repeat(self.badPixelMap[...,np.newaxis],Seq.NumFrames,axis=2)
+#        darkData = np.nanmean(np.ma.masked_where(badPixelMap3D!=0,Data),axis=2)
+#        darkStd = np.nanstd(np.ma.masked_where(badPixelMap3D!=0,Data),axis=2)
+        darkData = np.nanmean(Data,axis=2)
+        darkStd = np.nanstd(Data,axis=2)
+#        darkData[self.badPixelMap!=0] = np.nan
+#        darkStd[self.badPixelMap!=0] = np.nan
         dark = Dark()
         dark.data = darkData
         dark.noise = darkStd
@@ -263,14 +267,16 @@ class MethaneAIR_L1(object):
 #        readOutError = self.readOutError
         self.logger.info('loading seq file '+granulePath)
         (Data,Meta,Seq) = ReadSeq(granulePath)
-        badPixelMap3D = np.repeat(self.badPixelMap[...,np.newaxis],Seq.NumFrames,axis=2)
         Data = np.float32(np.transpose(Data,(2,1,0)))
         # estimate noise
+        self.logger.info('estimate noise')
         Noise = np.sqrt((Data-darkData[...,np.newaxis])*ePerDN+(darkStd[...,np.newaxis]*ePerDN)**2)/ePerDN
 #        Noise = np.sqrt((Data-darkOffsetDN)*ePerDN+readOutError**2)/ePerDN
         # remove dark
         Data = Data-darkData[...,np.newaxis]
         # mask bad pixels
+        self.logger.info('mask bad pixels')
+        badPixelMap3D = np.repeat(self.badPixelMap[...,np.newaxis],Seq.NumFrames,axis=2)
         Data[badPixelMap3D!=0] = np.nan
         Noise[badPixelMap3D!=0] = np.nan
 #        Data = np.ma.masked_array(Data,
