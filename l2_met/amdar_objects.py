@@ -263,6 +263,86 @@ class amdar(object):
         #PBLH_estimated = y_predict.reshape(self.era_lat.shape[0],self.era_lon.shape[0])
         return y_predict
         
+    def F_interp_merra2_amdar(self,sounding_lon,sounding_lat,sounding_datenum,\
+                            merra2_dir,\
+                            merra2_fields=['PBLTOP','PS'],\
+                            fn_header='MERRA2_300.tavg1_2d_slv_Nx',
+                            lag_hour=[0,-2,-4]):
+        """
+        sample a field from merra2 data in .nc format at coordinates sounding_lon, sounding_lat, and
+        time sounding_datenum. based on F_interp_merra2 in popy. added lag_hour
+        to faciliate random forest pblh model
+        sounding_lon:
+            longitude for interpolation
+        sounding_lat:
+            latitude for interpolation
+        sounding_datenum:
+            time for interpolation in matlab datenum double format, in !!!UTC!!!
+        merra2_dir:
+            directory where subset era5 data in .nc are saved
+        merra2_fields:
+            variables to interpolate from merra2, only 2d fields are supported
+        fn_header:
+            'MERRA2_300.tavg1_2d_slv_Nx' or 'MERRA2_400.tavg1_2d_slv_Nx'
+        lag_hour:
+            if sounding is 17 utc, lag hour 0 samples at 17 utc, lag hour
+            -2 samples at 15 utc
+        """
+        start_datenum = np.amin(sounding_datenum)
+        end_datenum = np.amax(sounding_datenum)
+        start_date = datedev_py(start_datenum).date()
+        
+        end_date = datedev_py(end_datenum).date()
+        days = (end_date-start_date).days+1
+        DATES = [start_date + datetime.timedelta(days=d) for d in range(days)]
+        merra2_data = {}
+        iday = 0
+        for DATE in DATES:
+            merra_filedir = os.path.join(merra2_dir,DATE.strftime('Y%Y'),\
+                                         DATE.strftime('M%m'),DATE.strftime('D%d'))
+            merra_flist = glob.glob(merra_filedir+'/*.nc')
+            if len(merra_flist) > 1:
+                self.logger.warning('Careful! More than one nc file in MERRA daily folder!')
+            elif len(merra_flist) == 0:
+                self.logger.warning('No merra file')
+                continue
+            fn = merra_flist[0]
+            if not merra2_data:
+                nc_out = F_ncread_selective(fn,np.concatenate(
+                        (merra2_fields,['lat','lon','time'])))
+                merra2_data['lon'] = nc_out['lon']
+                merra2_data['lat'] = nc_out['lat']
+                # how many hours are there in each daily file? have to be the same 
+                nhour = len(nc_out['time'])
+                merra2_data['datenum'] = np.zeros((nhour*(days)),dtype=np.float64)
+                # merra2 time is defined as minutes since 00:30:00 on that day
+                merra2_data['datenum'][iday*nhour:((iday+1)*nhour)] = DATE.toordinal()+366.+(nc_out['time']+30)/1440
+                for field in merra2_fields:
+                    merra2_data[field] = np.zeros((len(merra2_data['lon']),len(merra2_data['lat']),nhour*(days)))
+                    # was read in as 3-d array in time, lat, lon; transpose to lon, lat, time
+                    merra2_data[field][...,iday*nhour:((iday+1)*nhour)] = nc_out[field].transpose((2,1,0))
+            else:
+                nc_out = F_ncread_selective(fn,np.concatenate(
+                        (merra2_fields,['time'])))
+                # merra2 time is defined as minutes since 00:30:00 on that day
+                merra2_data['datenum'][iday*nhour:((iday+1)*nhour)] = DATE.toordinal()+366.+(nc_out['time']+30)/1440
+                for field in merra2_fields:
+                    # was read in as 3-d array in time, lat, lon; transpose to lon, lat, time
+                    merra2_data[field][...,iday*nhour:((iday+1)*nhour)] = nc_out[field].transpose((2,1,0))
+            # increment iday
+            iday = iday+1
+    
+        sounding_interp = {}
+        # interpolate
+        for field in merra2_fields:
+            f = \
+            RegularGridInterpolator((merra2_data['lon'],merra2_data['lat'],merra2_data['datenum']),\
+                                merra2_data[field],bounds_error=False,fill_value=np.nan)
+            for lag in lag_hour:
+                fieldname = field+'%s'%lag
+                sounding_interp[fieldname] = f((sounding_lon,sounding_lat,sounding_datenum+lag/24))
+        return sounding_interp
+        
     def F_interp_era5_amdar(self,sounding_lon,sounding_lat,sounding_datenum,\
                             era5_dir,\
                             era5_fields=['blh','zust','ssr','sshf'],\
@@ -285,8 +365,8 @@ class amdar(object):
         fn_header:
             in general should denote domain location of era5 data
         lag_hour:
-            if sounding is 17 utc, lag hour 0 samples era5 at 15 utc, lag hour
-            -2 samples era5 at 13 utc
+            if sounding is 17 utc, lag hour 0 samples era5 at 17 utc, lag hour
+            -2 samples era5 at 15 utc
         """
         start_datenum = np.amin(sounding_datenum)
         end_datenum = np.amax(sounding_datenum)
