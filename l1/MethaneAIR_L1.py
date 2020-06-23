@@ -248,7 +248,7 @@ class MethaneAIR_L1(object):
 #        self.ePerDN = ePerDN
 #        self.readOutError = readOutError
         
-    def F_granule_processor(self,granulePath,dark,ePerDN=4.6):
+    def F_granule_processor(self,granulePath,dark,ePerDN=4.6,timeOnly=False):
         """
         working horse
         granulePath:
@@ -258,8 +258,20 @@ class MethaneAIR_L1(object):
             of dark frame for subtraction
         ePerDN:
             electrons per DN number
+        timeOnly:
+            if only save time stamps, no worries about other data
         output is a Granule object
         """
+        if timeOnly:
+            self.logger.info('loading seq file '+granulePath)
+            (Data,Meta,Seq) = ReadSeq(granulePath)
+            granuleFrameTime = np.array([Meta[i].frameTime for i in range(Seq.NumFrames)])
+            granule = Granule()
+            granule.nFrame = Seq.NumFrames
+            granule.frameTime = granuleFrameTime
+            granule.seqDateTime = Seq.SeqTime
+            granule.frameDateTime = np.array([Meta[i].timestamp for i in range(Seq.NumFrames)])
+            return granule
         darkData = dark.data
         darkStd = dark.noise
 #        darkOffsetDN = self.darkOffsetDN
@@ -336,8 +348,9 @@ class MethaneAIR_L1(object):
         granuleSeconds:
             length of cut granule in s
         """
-        data = granule.data
-        noise = granule.noise
+        if hasattr(granule,'data'):
+            data = granule.data
+            noise = granule.noise
         #nFrame = granule.nFrame
         frameTime = granule.frameTime
         seqDateTime = granule.seqDateTime
@@ -363,8 +376,9 @@ class MethaneAIR_L1(object):
             g0.nFrame = np.int16(np.sum(f))
             g0.frameDateTime = frameDateTime[f]
             g0.frameTime = frameTime[f]
-            g0.data = data[...,f]
-            g0.noise = noise[...,f]
+            if hasattr(granule,'data'):
+                g0.data = data[...,f]
+                g0.noise = noise[...,f]
             granuleList[i] = g0
         return granuleList
     
@@ -401,7 +415,7 @@ class MethaneAIR_L1(object):
                             'granuleSecond':granuleSecond,
                             'granuleMicrosecond':granuleMicrosecond})
     
-    def F_save_L1B_mat(self,granule,headerStr='MethaneAIR_L1B_CH4_'):
+    def F_save_L1B_mat(self,granule,headerStr='MethaneAIR_L1B_CH4_',radianceOnly=True):
         """
         save calibrated data to level 1b file in .mat format for quick view
         granule:
@@ -433,6 +447,17 @@ class MethaneAIR_L1(object):
             data = data[::-1,...]
             noise = noise[::-1,...]
         self.logger.info('saving .mat L1B file '+l1FilePath)
+        if radianceOnly:
+            savemat(l1FilePath,{'radiance':np.asfortranarray(data).astype(np.float32),
+                            'GEOS_5_tau':GEOS_5_tau,
+                            'granuleYear':granuleYear,
+                            'granuleMonth':granuleMonth,
+                            'granuleDay':granuleDay,
+                            'granuleHour':granuleHour,
+                            'granuleMinute':granuleMinute,
+                            'granuleSecond':granuleSecond,
+                            'granuleMicrosecond':granuleMicrosecond})
+            return
         savemat(l1FilePath,{'wavelength':np.asfortranarray(wavelength),
                             'radiance':np.asfortranarray(data),
                             'radiance_error':np.asfortranarray(noise),
