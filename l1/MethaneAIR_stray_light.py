@@ -7,9 +7,121 @@ Created on Sun Mar 29 11:39:46 2020
 import numpy as np
 import pandas as pd
 import glob
+from scipy.interpolate import RegularGridInterpolator
+import matplotlib.pyplot as plt
 #BPM_ch4 = np.genfromtxt(r'C:\research\CH4\stray_light\CH4_bad_pix.csv',
 #                        delimiter=',',
 #                        dtype=np.int)
+
+class medianStrayLight():
+    """
+    the medianStrayLight object combines multiple mergedFrame objects by interpolating
+    them on a common column difference/row difference mesh grid, stacking them
+    together, and taking the median
+    """
+    def __init__(self,colAllGrid,rowAllGrid,whichBand='O2'):
+        """
+        """
+        self.whichBand = whichBand
+        self.nColAll = len(colAllGrid)
+        self.nRowAll = len(rowAllGrid)
+        self.interpMat = np.empty((self.nRowAll,self.nColAll,0),dtype=np.float32)
+        [colAllMesh,rowAllMesh] = np.meshgrid(colAllGrid,rowAllGrid)
+        self.colAllMesh = colAllMesh
+        self.rowAllMesh = rowAllMesh
+        # might need these?
+        self.colAllGrid = colAllGrid
+        self.rowAllGrid = rowAllGrid
+        
+    def loadMergedFrame(self, mergedFramePath, filter_rows=[[1,0]], 
+                        filter_columns=[[1,0]]):
+        """
+        load merged frame data and concatenate to interpMat
+        """
+        # load mergedFramePath
+        from scipy.io import loadmat
+            
+        mergedFrame = loadmat(mergedFramePath)
+        mergedFrameData = mergedFrame['mergedFrameData']
+        popt = np.transpose(mergedFrame['popt'])
+        mergedFrameData = mergedFrameData/popt[0]
+        
+        # filter out unwanted pixels (e.g., columns < 400 for CH4)
+        # write this in later?
+        if self.whichBand == 'CH4':
+            mergedFrameData[:,0:400] = np.nan
+        # shift the mergedFrame so the peak is at row 0, column, interpolate to colAllMesh, rowAllMesh
+        columns = np.arange(1024) - popt[1]
+        rows = np.arange(1280) - popt[2]
+        f = RegularGridInterpolator((rows, columns), mergedFrameData, \
+                                              bounds_error=False, fill_value=np.nan)
+        interpdata = f((self.rowAllMesh, self.colAllMesh))
+        interpdata.astype('float32')
+        
+        # filter out pixels at unwanted spatial stray light locations, the result is interpdata
+        peak_col = np.abs(self.colAllGrid[0])
+        peak_row = np.abs(self.rowAllGrid[0])
+        if filter_rows[0][0] < filter_rows[0][1]:
+            for i in range(len(filter_rows)):
+                interpdata[peak_row+filter_rows[i][0]:peak_row+filter_rows[i][1], \
+                            peak_col+filter_columns[i][0]:peak_col+filter_columns[i][1]] = np.nan
+            
+        # stack the interpolated data together
+        self.interpMat = np.concatenate((self.interpMat,interpdata[...,np.newaxis]),axis=2)
+        
+    def takeMedian(self):
+        self.medianStrayLight = np.nanmedian(self.interpMat,axis=2)
+       
+    def plotMedianStrayLightPcolor(self):
+        """
+        plot the median stray light with pcolormesh
+        """
+        from matplotlib.colors import LogNorm
+        plt.pcolormesh(self.colAllGrid-0.5, self.rowAllGrid-0.5, self.medianStrayLight, \
+                       norm=LogNorm(), cmap='jet')
+        plt.clim(1e-8, 1)
+        plt.colorbar()
+        plt.xlabel('Column distance')
+        plt.ylabel('Row distance')
+        plt.xlim(-1024/2, 1024/2)
+        plt.ylim(-500, 500)
+        
+    def plotMedianStrayLightSurface(self):
+        """
+        plot the median stray light with plot_surface
+        """
+        # issue with scaling z-axis to log scale
+        from mpl_toolkits.mplot3d import Axes3D
+        from matplotlib.colors import LogNorm
+        fig = plt.figure()
+        ax = fig.gca(projection='3d')   
+        plotmat = self.medianStrayLight/np.nanmax(self.medianStrayLight)
+        plotmat[plotmat<=0] = np.nan
+        plotmat = np.log10(plotmat)
+        ax.set_zlim(-8,0)
+        ax.set_ylim(np.min(self.rowAllGrid), np.max(self.rowAllGrid))
+        ax.set_xlim(np.min(self.colAllGrid), np.max(self.colAllGrid))
+        ax.plot_surface(self.colAllMesh, self.rowAllMesh, plotmat, \
+                       vmin = -8, vmax = 0,
+                       rcount = 500, ccount = 500, cmap='jet')
+        
+    def plotSpectralStrayLight(self):
+        """
+        plot spectral stray light
+        """
+        plt.plot(self.colAllGrid, np.nanmax(self.medianStrayLight, 0), 'o', markersize=2.5)
+        plt.yscale('log')
+        plt.xlabel('Column distance')
+        
+    def plotSpatialStrayLight(self):
+        """
+        plot spatial stray light
+        """
+        plt.plot(self.rowAllGrid, np.nanmax(self.medianStrayLight, 1),'o', markersize=2.5)
+        plt.yscale('log')
+        plt.xlabel('Row distance')
+
+
 def twoDGaussian(inp,amplitude,xo,yo,sigma_x,sigma_y,theta):
     x = inp['x'];y = inp['y']
     a = (np.cos(theta)**2)/(2*sigma_x**2) + (np.sin(theta)**2)/(2*sigma_y**2)
