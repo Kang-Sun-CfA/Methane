@@ -200,14 +200,14 @@ class MethaneAIR_L1(object):
         reducedRow = d['rowAllGrid'].squeeze()[rowFilter]
         reducedCol = d['colAllGrid'].squeeze()[colFilter]
         strayLightKernel = d['medianStrayLight'][np.ix_(rowFilter,colFilter)]
-        strayLightKernel[strayLightKernel<0] = 0
-        strayLightKernel = strayLightKernel/np.sum(strayLightKernel)
+        strayLightKernel[strayLightKernel<0] = 0.
+        strayLightKernel = strayLightKernel/np.nansum(strayLightKernel)
         centerRowFilter = (reducedRow >= -np.abs(rowCenterMask)) & \
         (reducedRow <= np.abs(rowCenterMask))
         centerColFilter = (reducedCol >= -np.abs(colCenterMask)) & \
         (reducedCol <= np.abs(colCenterMask))
         strayLightKernel[np.ix_(centerRowFilter,centerColFilter)] = 0
-        strayLightFraction = np.sum(strayLightKernel)
+        strayLightFraction = np.nansum(strayLightKernel)
         
         self.strayLightKernel = strayLightKernel
         self.strayLightFraction = strayLightFraction
@@ -320,7 +320,7 @@ class MethaneAIR_L1(object):
             for iframe in range(Seq.NumFrames):
                 tmpData = Data[:,:,iframe]
                 for iDeconvIter in range(nDeconvIter):
-                    tmpData = (Data[:,:,iframe]-convolve_fft(tmpData,strayLightKernel))\
+                    tmpData = (Data[:,:,iframe]-convolve_fft(tmpData,strayLightKernel,normalize_kernel=False))\
                     /(1-strayLightFraction)
                 Data[:,:,iframe] = tmpData
         else:
