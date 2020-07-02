@@ -295,4 +295,5 @@ class Exposure():
         laser_dBm = self.brights.loc[self.brights['Wavelength'] == wvlen].iloc[0]['Power']
         laser_mW = np.power(10.,laser_dBm/10.)
         satmap = satmap / self.exptime / laser_mW
+        self.laser_mW = laser_mW
         return(satmap)
