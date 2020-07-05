@@ -54,7 +54,7 @@ switch whichBand
         straylight_data = load(ch4_median_straylight_fn);
         % binning scheme of rows, 0.5:1:1280.5 means no binning
         rowBinning = [0.5:6:1278.5];%rowBinning = 0.5:1:1280.5;
-        [~,~,binSubs] = histcounts(1:1280,rowBinning);
+        [~,~,binSubs] = histcounts(1:1278,rowBinning);
         uniqueBin = unique(binSubs);
     case 'O2'
         center_w_vec = 1247:7:1317;
@@ -62,7 +62,7 @@ switch whichBand
         straylight_data = load(o2_median_straylight_fn);
         % binning scheme of rows, 0.5:1:1280.5 means no binning
         rowBinning = [0.5:6:1278.5];%rowBinning = 0.5:1:1280.5;
-        [~,~,binSubs] = histcounts(1:1280,rowBinning);
+        [~,~,binSubs] = histcounts(1:1278,rowBinning);
         uniqueBin = unique(binSubs);
 end
 % load/process stray light kernel
