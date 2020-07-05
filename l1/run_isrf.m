@@ -33,7 +33,8 @@ switch whichMachine
         code_dir = '/home/kangsun/CH4/ISRF/';
         output_dir = '/home/kangsun/CH4/ISRF/output/';
 end
-% need nanconv.m at code_dir for stray light correction
+% need nanconv.m at code_dir for stray light correction and fit_2D_data.m
+% for orthogonal linear fitting
 addpath(code_dir)
 F_shift_scale = @(coeff,inp) interp1(inp.ref_x+coeff(2),inp.ref_y*coeff(1),inp.xx,'nearest','extrap');
 nrow = 1280;
@@ -52,7 +53,7 @@ switch whichBand
         ch4_bad_pix = logical(load(ch4_bad_pix_fn));
         straylight_data = load(ch4_median_straylight_fn);
         % binning scheme of rows, 0.5:1:1280.5 means no binning
-        rowBinning = [0.5:6:1280 1280.5];%rowBinning = 0.5:1:1280.5;
+        rowBinning = [0.5:6:1278.5];%rowBinning = 0.5:1:1280.5;
         [~,~,binSubs] = histcounts(1:1280,rowBinning);
         uniqueBin = unique(binSubs);
     case 'O2'
@@ -60,7 +61,7 @@ switch whichBand
         o2_bad_pix = logical(load(o2_bad_pix_fn));
         straylight_data = load(o2_median_straylight_fn);
         % binning scheme of rows, 0.5:1:1280.5 means no binning
-        rowBinning = [0.5:6:1280 1280.5];%rowBinning = 0.5:1:1280.5;
+        rowBinning = [0.5:6:1278.5];%rowBinning = 0.5:1:1280.5;
         [~,~,binSubs] = histcounts(1:1280,rowBinning);
         uniqueBin = unique(binSubs);
 end
@@ -251,7 +252,7 @@ for icenter = 1:ncenter
     xx_all_row = nan(nft,650);
     yy_all_row = nan(nft,650);
     %% (parallel) loop over the rows, change for to parfor to run parallel
-    parfor ift = round(nft/3)%1:size(issf_reduced_data,1)
+    parfor ift = 1:nft
         row_data = squeeze(issf_reduced_data(ift,:,:));
         if sum(isnan(nanmean(row_data,2))) > 500
             disp(['Footprint ',num2str(ift),' seems empty'])
@@ -295,8 +296,17 @@ for icenter = 1:ncenter
                 set(gca,'ycolor','none','linewidth',1)
                 xlabel(['Columns of footprint ',num2str(ift),', laser central wavelength = ',num2str(center_w),' nm'])
             end
-            pp = polyfit(step_w_vec(~isnan(centers_of_mass)),centers_of_mass(~isnan(centers_of_mass)),1);
+            [~,pp] = fit_2D_data(step_w_vec(~isnan(centers_of_mass)),centers_of_mass(~isnan(centers_of_mass)),false);
             center_pix = polyval(pp,center_w);
+            %% look at the difference between OLS and orthogonal fit. They're very close, but not identical
+            if ifPlotDiagnose
+                pp_ols = polyfit(step_w_vec(~isnan(centers_of_mass)),centers_of_mass(~isnan(centers_of_mass)),1);
+                clf
+                plot(step_w_vec(~isnan(centers_of_mass)),centers_of_mass(~isnan(centers_of_mass)),'ok',...
+                    step_w_vec,polyval(pp_ols,step_w_vec),'-b',...
+                    step_w_vec,polyval(pp,step_w_vec),'-r')
+                legend('Wavelength vs. spectral pixel','OLS fit','Orthogonal fit')
+            end
             %% isrf1
             pix_mat = nan(ncol0,nstep);
             for istep = use_steps
@@ -386,7 +396,8 @@ for icenter = 1:ncenter
             end
             scales2(scales2 < 0.9 *nanmedian(scales2) | scales2 > 1.1 *nanmedian(scales2)) = nan;
             warning on
-            pp = polyfit(step_w_vec(~isnan(centers_of_mass2)),centers_of_mass2(~isnan(centers_of_mass2)),1);
+%             pp = polyfit(step_w_vec(~isnan(centers_of_mass2)),centers_of_mass2(~isnan(centers_of_mass2)),1);
+            [~,pp] = fit_2D_data(step_w_vec(~isnan(centers_of_mass2)),centers_of_mass2(~isnan(centers_of_mass2)),false);
             center_pix = polyval(pp,center_w);
             %% isrf2
             pix_mat = nan(ncol0,nstep);
@@ -478,7 +489,8 @@ for icenter = 1:ncenter
             end
             warning on
             scales3(scales3 < 0.9 *nanmedian(scales3) | scales3 > 1.1 *nanmedian(scales3)) = nan;
-            pp = polyfit(step_w_vec(~isnan(centers_of_mass3)),centers_of_mass3(~isnan(centers_of_mass3)),1);
+%             pp = polyfit(step_w_vec(~isnan(centers_of_mass3)),centers_of_mass3(~isnan(centers_of_mass3)),1);
+            [~,pp] = fit_2D_data(step_w_vec(~isnan(centers_of_mass3)),centers_of_mass3(~isnan(centers_of_mass3)),false);
             center_pix = polyval(pp,center_w);
             %% isrf3
             pix_mat = nan(ncol0,nstep);
@@ -569,7 +581,8 @@ for icenter = 1:ncenter
             end
             warning on
             scales4(scales4 < 0.9 *nanmedian(scales4) | scales4 > 1.1 *nanmedian(scales4)) = nan;
-            pp = polyfit(step_w_vec(~isnan(centers_of_mass4)),centers_of_mass4(~isnan(centers_of_mass4)),1);
+%             pp = polyfit(step_w_vec(~isnan(centers_of_mass4)),centers_of_mass4(~isnan(centers_of_mass4)),1);
+            [~,pp] = fit_2D_data(step_w_vec(~isnan(centers_of_mass4)),centers_of_mass4(~isnan(centers_of_mass4)),false);
             center_pix = polyval(pp,center_w);
             %% isrf4
             pix_mat = nan(ncol0,nstep);
