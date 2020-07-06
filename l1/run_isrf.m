@@ -87,8 +87,8 @@ ncenter = length(center_w_vec);
 % icenter loops over laser wavelength steps
 for icenter = 1:ncenter
     %if pix_ext_left/right are 7.5, the ISRF extends across a 15-pix window
-    pix_ext_left = 7.5;
-    pix_ext_right = 7.5;
+    pix_ext_left = 8.5;
+    pix_ext_right = 8.5;
     % 0.05 nm (0.1 nm window) is enough to fill the gap
     wav_ext = 0.095;
     
@@ -99,7 +99,7 @@ for icenter = 1:ncenter
         x_intercept_guess = ch4_intercept_guess;
         x_bad_pix = ch4_bad_pix;
         x_camera = 'ch4';
-        min_isrf = 5e-4;
+        min_isrf = 1e-5;
         if ~exist('ch4_rad_coef','var')
             load(ch4_rad_cal_fn)
             ch4_rad_coef = coef;

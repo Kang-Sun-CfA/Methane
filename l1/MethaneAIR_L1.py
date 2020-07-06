@@ -13,6 +13,47 @@ from scipy.io import loadmat
 from netCDF4 import Dataset
 from scipy.interpolate import interp1d
 
+def F_isrf_convolve_fft(w1,s1,w2,isrf_w,isrf_dw0,isrf_lut0):
+    """
+    astropy.covolute.convolve_fft-based convolution using wavelength-dependent isrf
+    w1:
+        high-resolution wavelength
+    s1:
+        high-resolution spectrum
+    w2:
+        low-resolution wavelength
+    isrf_w:
+        center wavelength grid of isrf lut
+    isrf_dw:
+        wavelength grid on which isrfs are defined
+    isrf_lut:
+        instrument spectral response function look up table
+    """
+    from astropy.convolution import convolve_fft
+    from scipy.interpolate import RegularGridInterpolator
+    from math import isclose
+    if isrf_lut0.shape != (len(isrf_w),len(isrf_dw0)):
+        raise ValueError('isrf_lut dimension incompatible!')
+        return np.full(w2.shape,np.nan)
+    # make sure w1 and isrf_dw have the same resolution
+    w1_step = np.median(np.diff(w1))
+    isrf_dw_step = np.median(np.diff(isrf_dw0))
+    if isclose(w1_step,isrf_dw_step):
+        isrf_dw = isrf_dw0
+        isrf_lut = isrf_lut0
+    else:# if not, interpolate isrf to a compatible grid with w1
+        isrf_dw_min = np.min(isrf_dw0)
+        isrf_dw_max = -isrf_dw_min
+        isrf_dw = np.linspace(isrf_dw_min,isrf_dw_max,int((isrf_dw_max-isrf_dw_min)/w1_step)+1)
+        isrf_lut = np.zeros((len(isrf_w),len(isrf_dw)))
+        for (iw,w) in enumerate(isrf_w):
+            interp_func = interp1d(isrf_dw0,isrf_lut0[iw,:])
+            isrf_lut[iw,:] = interp_func(isrf_dw)
+    # note that the isrf is flipped: convolution is the mirror-image of kernel averaging
+    s2_fft_lut = np.array([convolve_fft(s1,isrf_lut[iw,::-1]) for (iw,w) in enumerate(isrf_w)])
+    inter_func = RegularGridInterpolator((isrf_w,w1),s2_fft_lut,bounds_error=False)
+    return inter_func((w2,w2))
+
 # below ReadSeq routines are from Jonathan Franklin
 class Sequence():
     pass
@@ -152,17 +193,30 @@ class MethaneAIR_L1(object):
             self.logger.warning(l1DataDir,' does not exist, creating one')
             os.mkdir(l1DataDir)
         self.l1DataDir = l1DataDir
+        
+        self.ncol = 1024
+        self.nrow = 1280
+        
+        # bad pixel map
         self.logger.info('loading bad pixel map')
         self.badPixelMap = np.genfromtxt(badPixelMapPath,delimiter=',',dtype=np.int)
         self.logger.info('loading radiometric calibration coefficients')
-        self.radCalCoef = loadmat(radCalPath)['coef']
+        d = loadmat(radCalPath)['coef']
+        
+        # pad zero intercept and flip poly coeff order to be compatible with polyval
+        radCalCoef = np.concatenate((np.zeros((*d.shape[0:2], 1)),d),axis=2)
+        self.radCalCoef = np.flip(radCalCoef,axis=2)
+        
+        # wavelength calibration
         self.logger.info('loading wavelength calibration coefficients')
-        self.ncol = 1024
-        self.nrow = 1280
-        self.wavCalCoef = Dataset(wavCalPath)['pix2nm_polynomial_zero2four'][:]
+        spec_cal_fid = Dataset(wavCalPath)
+        wavCalCoef = spec_cal_fid['pix2nm_polynomial_zero2four'][:]
+        if wavCalCoef.shape[0] < wavCalCoef.shape[1]:
+            self.logger.warning('you appear to be using an old version wavcal! tranposing...')
+            self.wavCalCoef = wavCalCoef.T
         
         # wavelength calibration is independent of granules for now
-        wavelength = np.array([np.polyval(self.wavCalCoef[::-1,i],np.arange(1,self.ncol+1))\
+        wavelength = np.array([np.polyval(self.wavCalCoef[i,::-1],np.arange(1,self.ncol+1))\
                            for i in range(self.nrow)])
         d = loadmat(windowTransmissionPath)
         # interpolate window transmission to detector wavelength
@@ -301,15 +355,23 @@ class MethaneAIR_L1(object):
         Noise = Noise/granuleFrameTime[np.newaxis,np.newaxis,:]
         # rad cal
         self.logger.info('radiometric calibration')
-        newData = np.zeros(Data.shape)
-        newNoise = np.zeros(Data.shape)
-        for ipoly in range(self.radCalCoef.shape[-1]):
-            newData = newData+self.radCalCoef[...,ipoly][...,np.newaxis]*\
-            np.power(Data,ipoly+1)
-            newNoise = newNoise+self.radCalCoef[...,ipoly][...,np.newaxis]*\
-            np.power(Noise,ipoly+1)
-        Data = newData
-        Noise = newNoise
+        for i in range(self.nrow):
+            for j in range(self.ncol):
+                if np.isnan(self.radCalCoef[i,j,0]):
+                    Data[i,j,:] = np.nan
+                    Noise[i,j,:] = np.nan
+                    continue
+                Data[i,j,:] = np.polyval(self.radCalCoef[i,j,:],Data[i,j,:])
+                Noise[i,j,:] = np.polyval(self.radCalCoef[i,j,:],Noise[i,j,:])
+#        newData = np.zeros(Data.shape)
+#        newNoise = np.zeros(Data.shape)
+#        for ipoly in range(self.radCalCoef.shape[-1]):
+#            newData = newData+self.radCalCoef[...,ipoly][...,np.newaxis]*\
+#            np.power(Data,ipoly+1)
+#            newNoise = newNoise+self.radCalCoef[...,ipoly][...,np.newaxis]*\
+#            np.power(Noise,ipoly+1)
+#        Data = newData
+#        Noise = newNoise
         
         if hasattr(self,'strayLightKernel'):
             self.logger.info('proceed with stray light correction')
@@ -339,6 +401,86 @@ class MethaneAIR_L1(object):
         granule.seqDateTime = Seq.SeqTime
         granule.frameDateTime = np.array([Meta[i].timestamp for i in range(Seq.NumFrames)])
         return granule
+    
+    def F_block_reduce_granule(self,granule,acrossTrackAggregation=6,
+                               alongTrackAggregation=10,ifKeepTail=True):
+        """
+        block-reduce gradule by aggregating in across/along track or row/frame dimensions
+        graule:
+            outputs from F_granule_processor, a Granule object
+        across/alongTrackAggregation:
+            as indicated by name
+        ifKeepTail:
+            whether to aggregate the leftover frames after block reduce
+        """
+        if acrossTrackAggregation == 1 and alongTrackAggregation == 1:
+            self.logger.warning('No aggregation needs to be done. Why are you calling this function?')
+            return granule
+        from astropy.nddata.utils import block_reduce
+        newGranule = Granule()
+        newGranule.seqDateTime = granule.seqDateTime
+        nFootprint = np.floor(granule.data.shape[0]/acrossTrackAggregation).astype(np.int)
+        nTailRow = (granule.data.shape[0]-nFootprint*acrossTrackAggregation).astype(np.int)
+        self.logger.info('%d'%granule.data.shape[0]+' rows will be reduced to %d'%nFootprint+' footprints')
+        self.logger.info('The last %d'%nTailRow+' rows will be thrown away')
+        nFrameAggregated = np.floor(granule.data.shape[2]/alongTrackAggregation).astype(np.int)
+        nTailFrame = (granule.data.shape[2]-nFrameAggregated*alongTrackAggregation).astype(np.int)
+        self.logger.info('%d'%granule.data.shape[2]+' frames in the granule will be reduced to %d'%nFrameAggregated+' aggregated frames')
+        
+        if not ifKeepTail or nTailFrame == 0:
+            self.logger.info('The last %d'%nTailFrame+' frames will be thrown away')
+            newGranule.data = block_reduce(granule.data,
+                                           (acrossTrackAggregation,1,alongTrackAggregation),
+                                           func=np.nanmean)
+            sumSquare = block_reduce(np.power(granule.noise,2),
+                                    (acrossTrackAggregation,1,alongTrackAggregation),
+                                    func=np.nansum)
+            newGranule.noise = np.sqrt(sumSquare/acrossTrackAggregation/alongTrackAggregation)
+            newGranule.frameDateTime = block_reduce(granule.frameDateTime,
+                                                    alongTrackAggregation,
+                                                    func=np.nanmax)
+            newGranule.frameTime = block_reduce(granule.frameTime,
+                                                alongTrackAggregation,
+                                                func=np.nansum)
+            newGranule.nFrame = nFrameAggregated
+        else:
+            self.logger.info('The last %d'%nTailFrame+' frame will be aggregated')
+            data1 = block_reduce(granule.data,
+                                (acrossTrackAggregation,1,alongTrackAggregation),
+                                func=np.nanmean)
+            data2 = block_reduce(granule.data[...,-nTailFrame:],
+                                 (acrossTrackAggregation,1,nTailFrame),
+                                 func=np.nanmean)
+            self.logger.debug('data1 shape is %d'%data1.shape[0]+', %d'%data1.shape[1]+', %d'%data1.shape[2])
+            self.logger.debug('data2 shape is %d'%data2.shape[0]+', %d'%data2.shape[1]+', %d'%data2.shape[2])
+            newGranule.data = np.concatenate((data1,data2),axis=2)
+            sumSquare = block_reduce(np.power(granule.noise,2),
+                                     (acrossTrackAggregation,1,alongTrackAggregation),
+                                     func=np.nansum)
+            noise1 = np.sqrt(sumSquare/acrossTrackAggregation/alongTrackAggregation)
+            sumSquare = block_reduce(np.power(granule.noise[...,-nTailFrame:],2),
+                                     (acrossTrackAggregation,1,nTailFrame),
+                                     func=np.nansum)
+            noise2 = np.sqrt(sumSquare/acrossTrackAggregation/nTailFrame)
+            newGranule.noise = np.concatenate((noise1,noise2),axis=2)
+            frameDateTime1 = block_reduce(granule.frameDateTime,
+                                          alongTrackAggregation,
+                                          func=np.nanmax)
+            frameDateTime2 = block_reduce(granule.frameDateTime[-nTailFrame:],
+                                          nTailFrame,
+                                          func=np.nanmax)
+            newGranule.frameDateTime = np.concatenate((frameDateTime1,frameDateTime2))
+            frameTime1 = block_reduce(granule.frameTime,
+                                      alongTrackAggregation,
+                                      func=np.nansum)
+            frameTime2 = block_reduce(granule.frameTime[-nTailFrame:],
+                                      nTailFrame,
+                                      func=np.nansum)
+            newGranule.frameTime = np.concatenate((frameTime1,frameTime2))
+            newGranule.nFrame = nFrameAggregated+1
+            if len(newGranule.frameTime) != newGranule.nFrame:
+                self.logger.error('this should not happen!')
+        return newGranule
     
     def F_cut_granule(self,granule,granuleSeconds=10):
         """
