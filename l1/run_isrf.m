@@ -1,13 +1,13 @@
 clc;close all;clear
 % Kang's pc: 'pc'; UB work station: 'UB'; add new options by expanding the
 % switch structure below
-whichMachine = 'UB';
+whichMachine = 'pc';
 % 'CH4' or 'O2'
 whichBand = 'CH4';
 % true if want to plot detailed information, false for running all cases
-ifPlotDiagnose = false;
+ifPlotDiagnose = true;
 % do stray light correction or not
-doStrayLight = true;
+doStrayLight = false;
 % number of iterations in stray light correction
 niter = 3;
 switch whichMachine
