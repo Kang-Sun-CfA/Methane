@@ -1,11 +1,11 @@
 clc;close all;clear
 % Kang's pc: 'pc'; UB work station: 'UB'; add new options by expanding the
 % switch structure below
-whichMachine = 'pc';
+whichMachine = 'UB';
 % 'CH4' or 'O2'
 whichBand = 'CH4';
 % true if want to plot detailed information, false for running all cases
-ifPlotDiagnose = true;
+ifPlotDiagnose = false;
 % do stray light correction or not
 doStrayLight = false;
 % number of iterations in stray light correction
@@ -53,8 +53,10 @@ switch whichBand
         ch4_bad_pix = logical(load(ch4_bad_pix_fn));
         straylight_data = load(ch4_median_straylight_fn);
         % binning scheme of rows, 0.5:1:1280.5 means no binning
-        rowBinning = [0.5:6:1278.5];%rowBinning = 0.5:1:1280.5;
-        [~,~,binSubs] = histcounts(1:1278,rowBinning);
+        %rowBinning = [0.5:6:1278.5];
+		%[~,~,binSubs] = histcounts(1:1278,rowBinning);
+		rowBinning = 0.5:1:1280.5;
+        [~,~,binSubs] = histcounts(1:1280,rowBinning);
         uniqueBin = unique(binSubs);
     case 'O2'
         center_w_vec = 1247:7:1317;
@@ -219,7 +221,7 @@ for icenter = 1:ncenter
     %% bin the rows
     issf_reduced_data = nan(length(uniqueBin),size(issf_data,2),size(issf_data,3));
     for ibin = 1:length(uniqueBin)
-        issf_reduced_data(ibin,:,:) = nanmean(issf_data(binSubs==uniqueBin(ibin),:,:));
+        issf_reduced_data(ibin,:,:) = nanmean(issf_data(binSubs==uniqueBin(ibin),:,:),1);
     end
     % number of footprints, binned (reduced) from number of rows
     nft = size(issf_reduced_data,1);
