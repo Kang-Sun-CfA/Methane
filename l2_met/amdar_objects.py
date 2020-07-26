@@ -263,6 +263,99 @@ class amdar(object):
         #PBLH_estimated = y_predict.reshape(self.era_lat.shape[0],self.era_lon.shape[0])
         return y_predict
         
+    def F_interp_narr_amdar(self,sounding_lon,sounding_lat,sounding_datenum,\
+                            narr_dir,\
+                            narr_fields=['PBLH','P_surf'],\
+                            fn_header='subset',
+                            lag_hour=[0]):
+        '''
+        sample a field from narr data in .mat format (by narr.py) at coordinates sounding_lon, sounding_lat, and
+        time sounding_datenum. based on F_interp_narr_mat in popy. added lag_hour
+        to faciliate random forest pblh model
+        sounding_lon:
+            longitude for interpolation
+        sounding_lat:
+            latitude for interpolation
+        sounding_datenum:
+            time for interpolation in matlab datenum double format, in !!!UTC!!!
+        narr_dir:
+            directory where subset narr data in .mat are saved
+        narr_fields:
+            variables to interpolate from narr, only 2d fields are supported
+        fn_header:
+            'subset'
+        lag_hour:
+            if sounding is 17 utc, lag hour 0 samples at 17 utc, lag hour
+            -2 samples at 15 utc
+        '''
+        from scipy.io import loadmat
+        from scipy.interpolate import RegularGridInterpolator
+        from pyproj import Proj
+        p2 = Proj(proj='lcc',R=6367.470, lat_1=50, lat_2=50,lon_0=360-107,lat_0=50)#, ellps='clrk66')#the ellps option doesn't matter
+        sounding_x,sounding_y = p2(sounding_lon,sounding_lat)
+        start_datenum = np.amin(sounding_datenum)
+        end_datenum = np.amax(sounding_datenum)
+        start_datetime = datedev_py(start_datenum)
+        start_year = start_datetime.year
+        start_month = start_datetime.month
+        start_day = start_datetime.day
+        start_hour = start_datetime.hour
+        end_datetime = datedev_py(end_datenum)
+        end_year = end_datetime.year
+        end_month = end_datetime.month
+        end_day = end_datetime.day
+        end_hour = end_datetime.hour
+        step_hour = 3 # narr data are 3-hourly
+        narr_start_hour = start_hour-start_hour%step_hour
+        narr_start_datetime = datetime.datetime(year=start_year,month=start_month,day=start_day,hour=narr_start_hour)
+        if end_hour >= 24-step_hour:
+            narr_end_hour = 0
+            narr_end_datetime = datetime.datetime(year=end_year,month=end_month,day=end_day,hour=narr_end_hour)\
+            +datetime.timedelta(days=1)
+        else:
+            narr_end_hour = (step_hour-(end_hour+1)%step_hour)%step_hour+end_hour+1
+            narr_end_datetime = datetime.datetime(year=end_year,month=end_month,day=end_day,hour=narr_end_hour)
+        nstep = (narr_end_datetime-narr_start_datetime).total_seconds()/3600/step_hour+1
+        nstep = int(nstep)
+        
+        narr_data = {}
+        # load narr data
+        for istep in range(nstep):
+            file_datetime = narr_start_datetime+datetime.timedelta(hours=step_hour*istep)
+            file_name = fn_header+'_'+file_datetime.strftime('%Y%m%d_%H%M')+'.mat'
+            file_path = os.path.join(narr_dir,file_datetime.strftime('Y%Y'),\
+                                     file_datetime.strftime('M%m'),\
+                                     file_datetime.strftime('D%d'),file_name)
+            if not narr_data:
+                mat_data = loadmat(file_path,variable_names=np.concatenate((['x','y'],narr_fields)))
+                narr_data['x'] = mat_data['x'].squeeze()
+                narr_data['y'] = mat_data['y'].squeeze()
+                for fn in narr_fields:
+                    narr_data[fn] = np.zeros((len(narr_data['x']),len(narr_data['y']),nstep))
+                    narr_data[fn][...,istep] = mat_data[fn].T
+            else:
+                mat_data = loadmat(file_path,variable_names=narr_fields)
+                for fn in narr_fields:
+                    narr_data[fn][...,istep] = mat_data[fn].T
+        # construct time axis
+        narr_data['datenum'] = np.zeros((nstep),dtype=np.float64)
+        for istep in range(nstep):
+            file_datetime = narr_start_datetime+datetime.timedelta(hours=step_hour*istep)
+            narr_data['datenum'][istep] = (file_datetime.toordinal()\
+                                        +file_datetime.hour/24.\
+                                        +file_datetime.minute/1440.\
+                                        +file_datetime.second/86400.+366.)
+        # interpolate
+        sounding_interp = {}
+        for fn in narr_fields:
+            my_interpolating_function = \
+            RegularGridInterpolator((narr_data['x'],narr_data['y'],narr_data['datenum']),\
+                                    narr_data[fn],bounds_error=False,fill_value=np.nan)
+            for lag in lag_hour:
+                fieldname = fn+'%s'%lag
+                sounding_interp[fieldname] = my_interpolating_function((sounding_x,sounding_y,sounding_datenum+lag/24))
+        return sounding_interp
+    
     def F_interp_merra2_amdar(self,sounding_lon,sounding_lat,sounding_datenum,\
                             merra2_dir,\
                             merra2_fields=['PBLTOP','PS'],\
@@ -279,7 +372,7 @@ class amdar(object):
         sounding_datenum:
             time for interpolation in matlab datenum double format, in !!!UTC!!!
         merra2_dir:
-            directory where subset era5 data in .nc are saved
+            directory where subset merra2 data in .nc are saved
         merra2_fields:
             variables to interpolate from merra2, only 2d fields are supported
         fn_header:

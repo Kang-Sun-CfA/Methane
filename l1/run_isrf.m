@@ -251,8 +251,8 @@ for icenter = 1:ncenter
     end
     %%
     final_center_pix_vec = nan(1,nft);
-    xx_all_row = nan(nft,650);
-    yy_all_row = nan(nft,650);
+    xx_all_row = nan(nft,700);
+    yy_all_row = nan(nft,700);
     %% (parallel) loop over the rows, change for to parfor to run parallel
     parfor ift = 1:nft
         row_data = squeeze(issf_reduced_data(ift,:,:));
@@ -652,7 +652,7 @@ for icenter = 1:ncenter
             warning(['wavelength ',num2str(center_w),', footprint ',num2str(ift),' failed oversampling!']);
             continue
         end
-        xx_all = nan(650,1);
+        xx_all = nan(700,1);
         xx_all(1:length(xx)) = xx;
         xx_all_row(ift,:) = xx_all;
         xx_all(1:length(xx)) = yy;
