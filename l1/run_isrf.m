@@ -7,7 +7,7 @@ whichBand = 'CH4';
 % true if want to plot detailed information, false for running all cases
 ifPlotDiagnose = false;
 % do stray light correction or not
-doStrayLight = false;
+doStrayLight = true;
 % number of iterations in stray light correction
 niter = 3;
 switch whichMachine
@@ -79,7 +79,7 @@ K_far = K_far/sum(K_far(:));
 reducedRow = straylight_data.rowAllGrid(straylight_data.rowAllGrid > -350 & straylight_data.rowAllGrid < 350);
 reducedCol = straylight_data.colAllGrid(straylight_data.colAllGrid > -350 & straylight_data.colAllGrid < 350);
 K_far(reducedRow > -6 & reducedRow < 6,...
-    reducedCol > -8 & reducedCol < 8) = 0;
+    reducedCol > -7 & reducedCol < 7) = 0;
 if ifPlotDiagnose
     figure;imagesc(K_far);set(gca,'colorscale','log')
 end

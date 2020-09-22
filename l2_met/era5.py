@@ -88,6 +88,7 @@ class era5(object):
                                                  '100m_v_component_of_wind',\
                                                  '2m_temperature',\
                                                  'skin_temperature']],\
+                        pressure_level=['700', '750', '775','800','825','850','875','900','925','950','975','1000'],\
                         download_start_hour=0.,download_end_hour=23.,\
                         fn_header='CONUS'):
         """
@@ -121,7 +122,7 @@ class era5(object):
                 collection_header = '_2D'
             elif file_collection_name == 'reanalysis-era5-pressure-levels':
                 collection_header = '_3D'
-                cds_dict['pressure_level'] = ['825','850','875','900','925','950','975','1000']
+                cds_dict['pressure_level'] = pressure_level
             else:
                 collection_header = ''
             for date in dates:
