@@ -61,11 +61,7 @@ class amdar(object):
         """
         self.logger = logging.getLogger(__name__)
         self.logger.info('creating an instance of amdar logger')
-        if not airports_info_path:
-            self.airports_info = pd.read_csv(airports_info_path)
-        else:
-            self.airports_info = []
-            self.logger.info('airports information is not provided. amdar-related functions may not work')
+        self.airports_info = pd.read_csv(airports_info_path)
         self.start_datetime = datetime.datetime(start_year,start_month,start_day,
                                            start_hour,0,0)
         self.end_datetime = datetime.datetime(end_year,end_month,end_day,

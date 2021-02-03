@@ -850,7 +850,7 @@ class Forward_Model(object):
         result.nw2 = nw2
         result.yy = yy
         result.yhat = yhat
-        result.niter = count-1
+        result.niter = count
         result.beta = beta
         result.max_iter = max_iter
         result.chi2 = np.sum(np.power(yy-yhat,2))/np.trace(Sy)
@@ -946,7 +946,7 @@ def F_fit_profile(tangent_height,radiance,radiance_error,wavelength,
                                   independent_vars=['w1','wavelength','L','p_profile','nu','einsteinA'],
                                   param_names=['nO2s_profile','T_profile','HW1E','w_shift'])
         aOE.set_prior('nO2s_profile',prior=nO2s_profile,prior_error=nO2s_profile_e,p_profile=p_profile_middle,correlation_scaleHeight=1)
-        aOE.set_prior('T_profile',prior=T_profile,prior_error=T_profile_e,p_profile=p_profile_middle,correlation_scaleHeight=1,vmin=80,vmax=500)
+        aOE.set_prior('T_profile',prior=T_profile,prior_error=T_profile_e,p_profile=p_profile_middle,correlation_scaleHeight=1,vmin=50,vmax=500)
         aOE.set_prior('HW1E',prior=HW1E_prior,prior_error=HW1E_prior/2)
         aOE.set_prior('w_shift',prior=0.,prior_error=1.)
         result = aOE.retrieve(radiance,radiance_error,max_iter=max_iter,
@@ -962,7 +962,7 @@ def F_fit_profile(tangent_height,radiance,radiance_error,wavelength,
                                   independent_vars=['w1','wavelength','L','p_profile','nu','einsteinA'],
                                   param_names=['nO2s_profile','T_profile','HW1E','w_shift'])
         aOE.set_prior('nO2s_profile',prior=nO2s_profile,prior_error=nO2s_profile_e,p_profile=p_profile_middle,correlation_scaleHeight=1)
-        aOE.set_prior('T_profile',prior=T_profile,prior_error=T_profile_e,p_profile=p_profile_middle,correlation_scaleHeight=1,vmin=80,vmax=350)
+        aOE.set_prior('T_profile',prior=T_profile,prior_error=T_profile_e,p_profile=p_profile_middle,correlation_scaleHeight=1,vmin=50,vmax=500)
         aOE.set_prior('HW1E',prior=HW1E_prior,prior_error=HW1E_prior/2)
         aOE.set_prior('w_shift',prior=0.,prior_error=1.)
         result = aOE.retrieve(radiance,radiance_error,max_iter=max_iter,
@@ -975,7 +975,7 @@ def F_fit_profile(tangent_height,radiance,radiance_error,wavelength,
                                   independent_vars=['w1','wavelength','L','p_profile','nu','T_profile_reference','einsteinA'],
                                   param_names=['nO2s_profile','T_profile','HW1E','w_shift','nO2Scale_profile'])
         aOE.set_prior('nO2s_profile',prior=nO2s_profile,prior_error=nO2s_profile_e,p_profile=p_profile_middle,correlation_scaleHeight=1)
-        aOE.set_prior('T_profile',prior=T_profile,prior_error=T_profile_e,p_profile=p_profile_middle,correlation_scaleHeight=1,vmin=80,vmax=350)
+        aOE.set_prior('T_profile',prior=T_profile,prior_error=T_profile_e,p_profile=p_profile_middle,correlation_scaleHeight=1,vmin=50,vmax=500)
         aOE.set_prior('HW1E',prior=HW1E_prior,prior_error=HW1E_prior/2)
         aOE.set_prior('w_shift',prior=0.,prior_error=1.)
         aOE.set_prior('nO2Scale_profile',prior=nO2Scale_profile,prior_error=nO2Scale_profile_e,
@@ -1035,7 +1035,7 @@ class Level2_Saver(object):
         self.sza.units = 'degree'
         self.sza._Storage = 'contiguous'
         
-        self.time = self.ncid.createVariable('time',np.float32,dimensions=('along_track','vertical'),fill_value=-1.0e+30)
+        self.time = self.ncid.createVariable('time',np.float64,dimensions=('along_track','vertical'),fill_value=-1.0e+30)
         self.time.comment = 'start time of scan phase'
         self.time.units = 's since 2000-01-01'
         self.time._Storage = 'contiguous'
@@ -1110,6 +1110,11 @@ class Level2_Saver(object):
         self.d_chi2.comment = 'goodness of fit indicated by the chi2 value'
         self.d_chi2.units = ''
         self.d_chi2._Storage = 'contiguous'
+        
+        self.d_niter = self.ncdelta.createVariable('number_of_iterations',np.int8,dimensions=('along_track','across_track'))
+        self.d_niter.comment = 'number of iterations'
+        self.d_niter.units = ''
+        self.d_niter._Storage = 'contiguous'
         
         if if_save_nO2Scale:
             self.d_nO2Scale = self.ncdelta.createVariable('O2_scaling',np.float32,dimensions=('along_track','across_track','vertical'),fill_value=-1.0e+30)
@@ -1195,6 +1200,11 @@ class Level2_Saver(object):
         self.s_chi2.units = ''
         self.s_chi2._Storage = 'contiguous'
         
+        self.s_niter = self.ncsigma.createVariable('number_of_iterations',np.int8,dimensions=('along_track','across_track'))
+        self.s_niter.comment = 'number of iterations'
+        self.s_niter.units = ''
+        self.s_niter._Storage = 'contiguous'
+        
         if if_save_nO2Scale:
             self.s_nO2Scale = self.ncsigma.createVariable('O2_scaling',np.float32,dimensions=('along_track','across_track','vertical'),fill_value=-1.0e+30)
             self.s_nO2Scale.comment = 'scaling factor for number density of O2 molecules at ground state'
@@ -1238,7 +1248,7 @@ class Level2_Saver(object):
             sys.exit("numpy array shape/size {}/{} is not compatible with netCDF file '{}' shape/size {}/{}. Abort write ouput!!!"
                      .format(npvar.shape,npvar.size,ncfvar.name,ncfvar.shape,ncfvar.size))
     
-    def set_variable(self,ncfvar,npvar):
+    def set_variable(self,ncfvar,npvar,if_mask_invalid=True):
         ''' Set values to netCDF variables
             ARGS:
                 ncfvar: netCDF variable
@@ -1250,7 +1260,10 @@ class Level2_Saver(object):
         # Check consistency of data shape and size
         self.check_dim(ncfvar,npvar)
         # Set data values
-        ncfvar[:] = npvar
+        if if_mask_invalid:
+            ncfvar[:] = np.ma.masked_invalid(npvar)
+        else:
+            ncfvar[:] = npvar
         
     def close(self):
         self.ncid.close()
