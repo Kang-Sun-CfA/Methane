@@ -6,6 +6,7 @@ Created on Sun Jan 17 16:09:38 2021
 """
 import numpy as np
 np.seterr(divide='ignore', invalid='ignore')
+import pandas as pd
 import datetime as dt
 import sys, os
 from netCDF4 import Dataset
@@ -988,6 +989,67 @@ def F_fit_profile(tangent_height,radiance,radiance_error,wavelength,
     result.dZ = dZ
     return result
 
+class Level2_Reader(object):
+    def __init__(self,filename):
+        '''
+        open file
+        '''
+        self.fid = Dataset(filename)
+    
+    def load_variable(self,data_fields=[],data_names=[]):
+        '''
+        load variables as attributes of the Level2_Reader object
+        '''
+        if len(data_fields) == 0:
+            data_fields = ['longitude','latitude','tangent_height','layer_thickness','solar_zenith_angle','time',
+                           'singlet_delta/temperature','singlet_delta/temperature_dofs','singlet_delta/temperature_error',
+                           'singlet_delta/excited_O2','singlet_delta/excited_O2_dofs','singlet_delta/excited_O2_error',
+                           'singlet_sigma/temperature','singlet_sigma/temperature_dofs','singlet_sigma/temperature_error',
+                           'singlet_sigma/excited_O2','singlet_sigma/excited_O2_dofs','singlet_sigma/excited_O2_error']
+            data_names = ['longitude','latitude','tangent_height','layer_thickness','solar_zenith_time','time',
+                           'delta_temperature','delta_temperature_dofs','delta_temperature_error',
+                           'delta_excited_O2','delta_excited_O2_dofs','delta_excited_O2_error',
+                           'sigma_temperature','sigma_temperature_dofs','sigma_temperature_error',
+                           'sigma_excited_O2','sigma_excited_O2_dofs','sigma_excited_O2_error']
+        if len(data_names) != len(data_fields):
+            data_names = [s.split('/')[-1] for s in data_fields]
+        for (i,f) in enumerate(data_fields):
+            setattr(self,data_names[i],self.fid[f][:])
+            if f == 'time':
+                time_data = np.array(self.fid['time'][:],dtype=np.float64)
+                datetime_data = np.ndarray(shape=time_data.shape,dtype=np.object_)
+                for iline in range(time_data.shape[0]):
+                    for ift in range(time_data.shape[1]):
+                        datetime_data[iline,ift] = dt.datetime(2000,1,1)+dt.timedelta(seconds=time_data[iline,ift])
+                setattr(self,'datetime',datetime_data)
+    
+    def collocate_ACE(self,ace_filename,window_hour=2,window_km=500):
+        '''
+        collocate ACE-FTS sounding for validation
+        '''
+        ace_fid = Dataset(ace_filename)
+        years = np.array(ace_fid['year'][:].squeeze(),dtype=np.int)
+        months = np.array(ace_fid['month'][:].squeeze(),dtype=np.int)
+        days = np.array(ace_fid['day'][:].squeeze(),dtype=np.int)
+        hours = np.array(ace_fid['hour'][:].squeeze(),dtype=np.float)
+        ace_datetime = pd.to_datetime([dt.datetime(years[i],months[i],days[i])+dt.timedelta(hours=hours[i])
+            for i in range(len(ace_fid['year'][:]))])
+        ace_seconds_since2000 = np.array((ace_datetime-dt.datetime(2000,1,1)).total_seconds())
+        # remove most irrelevant data
+        window_seconds = window_hour*3600
+        time_mask = (ace_seconds_since2000 > self.time.min()-window_seconds) & (ace_seconds_since2000 < self.time.max()+window_seconds)
+        self.ace_lon = ace_fid['longitude'][:][time_mask,]
+        self.ace_lat = ace_fid['latitude'][:][time_mask,]
+        self.ace_time = ace_seconds_since2000[time_mask]
+        self.ace_temperature = ace_fid['temperature'][:][time_mask,]
+        self.ace_altitude = ace_fid['altitude'][:]
+        self.ace_fid = ace_fid
+        
+    def close(self):
+        self.fid.close()
+        if hasattr(self,ace_fid):
+            self.ace_fid.close()
+    
 class Level2_Saver(object):
     def __init__(self):
         pass
