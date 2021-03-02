@@ -956,6 +956,10 @@ def F_fit_profile(tangent_height,radiance,radiance_error,wavelength,
         result.tangent_height = tangent_height
         result.THMask = THMask
         result.dZ = dZ
+        result.p_profile_middle = p_profile_middle
+        result.p_profile = p_profile
+        result.T_profile_prior = T_profile
+        result.nO2s_profile_prior = nO2s_profile
         return result
     
     if n_nO2 == 0:
@@ -987,6 +991,10 @@ def F_fit_profile(tangent_height,radiance,radiance_error,wavelength,
     result.tangent_height = tangent_height
     result.THMask = THMask
     result.dZ = dZ
+    result.p_profile_middle = p_profile_middle
+    result.p_profile = p_profile
+    result.T_profile_prior = T_profile
+    result.nO2s_profile_prior = nO2s_profile
     return result
 
 class Level2_Reader(object):
