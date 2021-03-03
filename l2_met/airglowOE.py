@@ -852,9 +852,12 @@ class Forward_Model(object):
         result.yy = yy
         result.yhat = yhat
         result.niter = count
+        beta = beta-dbeta
         result.beta = beta
+        result.Jprior = (beta-beta0).T@Sa_inv@(beta-beta0)
         result.max_iter = max_iter
         result.chi2 = np.sum(np.power(yy-yhat,2))/np.trace(Sy)
+        result.rmse = np.sqrt(np.mean(np.power(yy-yhat,2)))
         Shat = np.linalg.inv(K.T@Sy_inv@K+Sa_inv)
         result.Shat = Shat
         AVK = Shat@K.T@Sy_inv@K
@@ -1055,7 +1058,7 @@ class Level2_Reader(object):
         
     def close(self):
         self.fid.close()
-        if hasattr(self,ace_fid):
+        if hasattr(self,'ace_fid'):
             self.ace_fid.close()
     
 class Level2_Saver(object):
@@ -1181,6 +1184,16 @@ class Level2_Saver(object):
         self.d_chi2.units = ''
         self.d_chi2._Storage = 'contiguous'
         
+        self.d_rmse = self.ncdelta.createVariable('rmse',np.float32,dimensions=('along_track','across_track'),fill_value=-1.0e+30)
+        self.d_rmse.comment = 'goodness of fit indicated by residual root mean square'
+        self.d_rmse.units = 'same as radiance'
+        self.d_rmse._Storage = 'contiguous'
+        
+        self.d_Jprior = self.ncdelta.createVariable('Jprior',np.float32,dimensions=('along_track','across_track'),fill_value=-1.0e+30)
+        self.d_Jprior.comment = 'distance between solution and prior normalized by prior error'
+        self.d_Jprior.units = ''
+        self.d_Jprior._Storage = 'contiguous'
+        
         self.d_niter = self.ncdelta.createVariable('number_of_iterations',np.int8,dimensions=('along_track','across_track'))
         self.d_niter.comment = 'number of iterations'
         self.d_niter.units = ''
@@ -1269,6 +1282,16 @@ class Level2_Saver(object):
         self.s_chi2.comment = 'goodness of fit indicated by the chi2 value'
         self.s_chi2.units = ''
         self.s_chi2._Storage = 'contiguous'
+        
+        self.s_rmse = self.ncsigma.createVariable('rmse',np.float32,dimensions=('along_track','across_track'),fill_value=-1.0e+30)
+        self.s_rmse.comment = 'goodness of fit indicated by residual root mean square'
+        self.s_rmse.units = 'same as radiance'
+        self.s_rmse._Storage = 'contiguous'
+        
+        self.s_Jprior = self.ncsigma.createVariable('Jprior',np.float32,dimensions=('along_track','across_track'),fill_value=-1.0e+30)
+        self.s_Jprior.comment = 'distance between solution and prior normalized by prior error'
+        self.s_Jprior.units = ''
+        self.s_Jprior._Storage = 'contiguous'
         
         self.s_niter = self.ncsigma.createVariable('number_of_iterations',np.int8,dimensions=('along_track','across_track'))
         self.s_niter.comment = 'number of iterations'
