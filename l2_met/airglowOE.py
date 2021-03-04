@@ -21,6 +21,24 @@ from collections import OrderedDict
 from hapi import db_begin, fetch, arange_, absorptionCoefficient_Doppler, \
 absorptionCoefficient_Voigt, absorptionCoefficient_Voigt_jac
 
+def F_distance(lat1,lon1,lat2,lon2):
+    from math import sin, cos, sqrt, atan2, radians
+    
+    # approximate radius of earth in km
+    R = 6371.0
+    lat1 = radians(lat1)
+    lon1 = radians(lon1)
+    lat2 = radians(lat2)
+    lon2 = radians(lon2)
+    dlon = lon2 - lon1
+    dlat = lat2 - lat1
+    
+    a = sin(dlat / 2)**2 + cos(lat1) * cos(lat2) * sin(dlon / 2)**2
+    c = 2 * atan2(sqrt(a), sqrt(1 - a))
+    
+    distance = R * c
+    return distance
+
 class layer():
     
     def __init__(self,dz=None,p=1.01325e5,T=296.,
@@ -1049,10 +1067,26 @@ class Level2_Reader(object):
         # remove most irrelevant data
         window_seconds = window_hour*3600
         time_mask = (ace_seconds_since2000 > self.time.min()-window_seconds) & (ace_seconds_since2000 < self.time.max()+window_seconds)
-        self.ace_lon = ace_fid['longitude'][:][time_mask,]
-        self.ace_lat = ace_fid['latitude'][:][time_mask,]
-        self.ace_time = ace_seconds_since2000[time_mask]
-        self.ace_temperature = ace_fid['temperature'][:][time_mask,]
+        ace_lon = ace_fid['longitude'][:].squeeze()[time_mask]
+        ace_lat = ace_fid['latitude'][:].squeeze()[time_mask]
+        ace_time = ace_seconds_since2000[time_mask]
+        ace_temperature = ace_fid['temperature'][:][time_mask,]
+        collocation_idx_list = []
+        space_mask = np.zeros(len(ace_lat),dtype=np.bool)
+        for i in range(len(ace_lon)):
+            distance = np.zeros_like(self.latitude[...,0])
+            for iline in range(self.latitude.shape[0]):
+                for ift in range(self.latitude.shape[1]):
+                    distance[iline,ift] = F_distance(self.latitude[iline,ift,0],self.longitude[iline,ift,0],ace_lat[i],ace_lon[i])
+            tmp_mask = distance<window_km
+            if np.sum(tmp_mask) > 0:
+                collocation_idx_list.append(tmp_mask)
+                space_mask[i] = True
+        self.ace_lon = ace_lon[space_mask]
+        self.ace_lat = ace_lat[space_mask]
+        self.ace_time = ace_time[space_mask]
+        self.ace_temperature = ace_temperature[space_mask,]
+        self.ace_collocation_idx_list = collocation_idx_list
         self.ace_altitude = ace_fid['altitude'][:]
         self.ace_fid = ace_fid
         
