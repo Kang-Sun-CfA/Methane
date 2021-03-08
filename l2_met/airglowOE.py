@@ -1481,6 +1481,7 @@ class Level2_Regridder(object):
                             A[lat_idx,lon_idx,z_idx] = np.nansum([A[lat_idx,lon_idx,z_idx],s.s[iline,ift,ith]*s.se[iline,ift,ith]])
                             B[lat_idx,lon_idx,z_idx] = np.nansum([B[lat_idx,lon_idx,z_idx],s.se[iline,ift,ith]])
                             Ds[lat_idx,lon_idx,z_idx] = Ds[lat_idx,lon_idx,z_idx]+1
+            s.close()
             '''
             d_mask = (s.ddofs >= min_delta_dofs) & (np.repeat(s.dchi2[...,np.newaxis],s.z.shape[2],axis=2) < max_delta_chi2) & (~np.isnan(s.d))
             s_mask = (s.sdofs >= min_sigma_dofs) & (np.repeat(s.schi2[...,np.newaxis],s.z.shape[2],axis=2) < max_sigma_chi2) & (~np.isnan(s.s)) & (s.z >= 70)
@@ -1502,6 +1503,51 @@ class Level2_Regridder(object):
         self.total_sample_weight = B
         self.num_sample_delta = Dd
         self.num_sample_sigma = Ds
+    
+    def save_nc(self,l3_dir,header='SCI_airglow_L3_'):
+        l3_path = os.path.join(l3_dir,header+self.start_datetime.strftime('%Ym%m%d')+'-'+self.end_datetime.strftime('%Ym%m%d')+'.nc')
+        nc = Dataset(l3_path,'w',format='NETCDF4')
+        nc.createDimension('lat',self.nlat)
+        nc.createDimension('lon',self.nlon)
+        nc.createDimension('z',self.nz)
+        
+        latid = nc.createVariable('latitude',np.float32,dimensions=('lat'))
+        latid.comment = 'latitude at grid center'
+        latid.units = 'degrees north'
+        latid[:] = self.ygrid
+        
+        lonid = nc.createVariable('longitude',np.float32,dimensions=('lon'))
+        lonid.comment = 'longitude at grid center'
+        lonid.units = 'degrees east'
+        lonid[:] = self.xgrid
+        
+        zid = nc.createVariable('altitude',np.float32,dimensions=('z'))
+        zid.comment = 'altitude at grid center'
+        zid.units = 'km'
+        zid[:] = self.zgrid
+        
+        if hasattr(self,'temperature'):
+            tmp = nc.createVariable('temperature',np.float32,dimensions=('lat','lon','z'))
+            tmp.comment = 'temperature'
+            tmp.units = 'K'
+            tmp[:] = np.ma.masked_invalid(self.temperature)
+        
+        b = nc.createVariable('total_sample_weight',np.float32,dimensions=('lat','lon','z'))
+        b.comment = 'cumulative weight for regridding'
+        b.units = 'K'
+        b[:] = np.ma.masked_invalid(self.total_sample_weight)
+        
+        dd = nc.createVariable('num_sample_delta',np.int32,dimensions=('lat','lon','z'))
+        dd.comment = 'number of valid singlet Delta observations'
+        dd.units = ''
+        dd[:] = np.ma.masked_invalid(self.num_sample_delta)
+        
+        ds = nc.createVariable('num_sample_sigma',np.int32,dimensions=('lat','lon','z'))
+        ds.comment = 'number of valid singlet Sigma observations'
+        ds.units = ''
+        ds[:] = np.ma.masked_invalid(self.num_sample_sigma)
+        
+        nc.close()
 
 def F_wrapper_parallel_ft(args):
     try:
