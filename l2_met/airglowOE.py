@@ -8,7 +8,7 @@ import numpy as np
 np.seterr(divide='ignore', invalid='ignore')
 import pandas as pd
 import datetime as dt
-import sys, os
+import sys, os, glob
 from netCDF4 import Dataset
 import matplotlib.pyplot as plt
 from astropy.convolution import convolve_fft
@@ -1043,7 +1043,7 @@ class Level2_Reader(object):
         if len(data_names) != len(data_fields):
             data_names = [s.split('/')[-1] for s in data_fields]
         for (i,f) in enumerate(data_fields):
-            setattr(self,data_names[i],self.fid[f][:])
+            setattr(self,data_names[i],self.fid[f][:].filled(np.nan))
             if f == 'time':
                 time_data = np.array(self.fid['time'][:],dtype=np.float64)
                 datetime_data = np.ndarray(shape=time_data.shape,dtype=np.object_)
@@ -1395,6 +1395,113 @@ class Level2_Saver(object):
     def close(self):
         self.ncid.close()
 
+class Level2_Regridder(object):
+    def __init__(self,west=-180.,east=180.,south=-90.,north=90.,
+                 grid_size=1,grid_sizex=None,grid_sizey=None,
+                 lower_z=60.,upper_z=120.,dz=5,
+                 start_year=2004,start_month=1,start_day=1,
+                 end_year=2012,end_month=12,end_day=31):
+        '''
+        initialize properties
+        '''
+        self.logger = logging.getLogger(__name__)
+        self.logger.info('creating an instance of Level2_Regridder')
+        if grid_sizex is None:
+            grid_sizex = grid_size
+            grid_sizey = grid_size
+        else:
+            grid_size = None
+        self.grid_size = grid_size
+        self.grid_sizex = grid_sizex
+        self.grid_sizey = grid_sizey
+        self.start_datetime = dt.datetime(start_year,start_month,start_day,0,0,0)
+        self.end_datetime = dt.datetime(end_year,end_month,end_day,23,59,59)
+        self.xgrid = arange_(west+grid_sizex/2,east,grid_sizex)
+        self.ygrid = arange_(south+grid_sizey/2,north,grid_sizey)
+        self.xgridr = arange_(west,east,grid_sizex)
+        self.ygridr = arange_(south,north,grid_sizey)
+        self.zgrid = arange_(lower_z+dz/2,upper_z,dz)
+        self.zgridr = arange_(lower_z,upper_z,dz)
+        self.nlon = len(self.xgrid)
+        self.nlat = len(self.ygrid)
+        self.nz = len(self.zgrid)
+        self.dz = dz
+    
+    def find_orbits(self,l2_dir):
+        l2_list = glob.glob(os.path.join(l2_dir,'SCI*.nc'))
+        l2_datetimes = np.array([dt.datetime.strptime(os.path.split(l2_path)[-1][4:19],'%Y%m%dT%H%M%S') for l2_path in l2_list])
+        l2_orbits = np.array([np.int(os.path.split(l2_path)[-1][26:31]) for l2_path in l2_list])
+        time_mask = np.array([(l2_dt >= self.start_datetime) & (l2_dt <= self.end_datetime) for l2_dt in l2_datetimes])
+        self.l2_list = np.array(l2_list)[time_mask]
+        self.l2_datetimes = l2_datetimes[time_mask]
+        self.l2_orbits = l2_orbits[time_mask]
+        self.l2_dir = l2_dir
+        self.nl2 = len(self.l2_list)
+        self.logger.info('{} orbits are found'.format(self.nl2))
+        
+    def drop_in_the_box(self,l2_dir=None,regrid_field='temperature',
+                        max_delta_chi2=2,max_sigma_chi2=2,
+                        min_delta_dofs=0.5,min_sigma_dofs=0.5):
+        if not hasattr(self,'l2_list'):
+            self.find_orbits(l2_dir)
+        
+        A = np.zeros((self.nlat,self.nlon,self.nz),dtype=np.float32)
+        B = np.zeros((self.nlat,self.nlon,self.nz),dtype=np.float32)
+        Dd = np.zeros((self.nlat,self.nlon,self.nz),dtype=np.int32)
+        Ds = np.zeros((self.nlat,self.nlon,self.nz),dtype=np.int32)
+        
+        for fn in self.l2_list:
+            s = Level2_Reader(fn)
+            self.logger.info('loading variables from '+fn)
+            s.load_variable(data_fields=['longitude','latitude','tangent_height',
+                                         'singlet_delta/{}'.format(regrid_field),
+                                         'singlet_delta/{}_dofs'.format(regrid_field),
+                                         'singlet_delta/{}_error'.format(regrid_field),
+                                         'singlet_delta/chi2',
+                                         'singlet_sigma/{}'.format(regrid_field),
+                                         'singlet_sigma/{}_dofs'.format(regrid_field),
+                                         'singlet_sigma/{}_error'.format(regrid_field),
+                                         'singlet_sigma/chi2'],
+                            data_names=['lon','lat','z','d','ddofs','de','dchi2','s','sdofs','se','schi2'])
+            for iline in range(s.lat.shape[0]):
+                for ift in range(s.lat.shape[1]):
+                    for ith in range(s.lat.shape[2]):
+                        if (s.lat[iline,ift,ith] < self.ygridr.min()) or (s.lat[iline,ift,ith] > self.ygridr.max()) or\
+                            (s.lon[iline,ift,ith] < self.xgridr.min()) or (s.lon[iline,ift,ith] > self.xgridr.max()) or\
+                            (s.z[iline,ift,ith] < self.zgridr.min()) or (s.z[iline,ift,ith] > self.zgridr.max()):
+                                continue
+                        lat_idx = np.argmin(np.abs(self.ygrid-s.lat[iline,ift,ith]))
+                        lon_idx = np.argmin(np.abs(self.xgrid-s.lon[iline,ift,ith]))
+                        z_idx = np.argmin(np.abs(self.zgrid-s.z[iline,ift,ith]))
+                        if (s.ddofs[iline,ift,ith] >= min_delta_dofs) and (s.dchi2[iline,ift] < max_delta_chi2) and ~np.isnan(s.d[iline,ift,ith]):
+                            A[lat_idx,lon_idx,z_idx] = np.nansum([A[lat_idx,lon_idx,z_idx],s.d[iline,ift,ith]*s.de[iline,ift,ith]])
+                            B[lat_idx,lon_idx,z_idx] = np.nansum([B[lat_idx,lon_idx,z_idx],s.de[iline,ift,ith]])
+                            Dd[lat_idx,lon_idx,z_idx] = Dd[lat_idx,lon_idx,z_idx]+1
+                        if (s.sdofs[iline,ift,ith] >= min_sigma_dofs) and (s.schi2[iline,ift] < max_sigma_chi2) and ~np.isnan(s.s[iline,ift,ith]):
+                            A[lat_idx,lon_idx,z_idx] = np.nansum([A[lat_idx,lon_idx,z_idx],s.s[iline,ift,ith]*s.se[iline,ift,ith]])
+                            B[lat_idx,lon_idx,z_idx] = np.nansum([B[lat_idx,lon_idx,z_idx],s.se[iline,ift,ith]])
+                            Ds[lat_idx,lon_idx,z_idx] = Ds[lat_idx,lon_idx,z_idx]+1
+            '''
+            d_mask = (s.ddofs >= min_delta_dofs) & (np.repeat(s.dchi2[...,np.newaxis],s.z.shape[2],axis=2) < max_delta_chi2) & (~np.isnan(s.d))
+            s_mask = (s.sdofs >= min_sigma_dofs) & (np.repeat(s.schi2[...,np.newaxis],s.z.shape[2],axis=2) < max_sigma_chi2) & (~np.isnan(s.s)) & (s.z >= 70)
+            all_ones = np.ones(s.lat.shape,dtype=np.int32)
+            for ilat in range(self.nlat):
+                for ilon in range(self.nlon):
+                    for iz in range(self.nz):
+                        grid_mask = (s.lat >= self.ygridr[ilat]) & (s.lat <= self.ygridr[ilat+1]) &\
+                        (s.lon >= self.xgridr[ilon]) & (s.lon <= self.xgridr[ilon+1]) &\
+                        (s.z >= self.zgridr[iz]) & (s.z <= self.zgridr[iz+1]) 
+                        grid_mask_d = grid_mask & d_mask
+                        grid_mask_s = grid_mask & s_mask
+                        A[ilat,ilon,iz] = A[ilat,ilon,iz] + np.nansum(s.d[grid_mask_d]*s.de[grid_mask_d]) + np.nansum(s.s[grid_mask_s]*s.se[grid_mask_s])
+                        B[ilat,ilon,iz] = B[ilat,ilon,iz] + np.nansum(s.de[grid_mask_d]) + np.nansum(s.se[grid_mask_s])
+                        Dd[ilat,ilon,iz] = Dd[ilat,ilon,iz] + np.sum(all_ones[grid_mask_d])
+                        Ds[ilat,ilon,iz] = Ds[ilat,ilon,iz] + np.sum(all_ones[grid_mask_s])
+            '''
+        setattr(self,regrid_field,A/B)
+        self.total_sample_weight = B
+        self.num_sample_delta = Dd
+        self.num_sample_sigma = Ds
 
 def F_wrapper_parallel_ft(args):
     try:
