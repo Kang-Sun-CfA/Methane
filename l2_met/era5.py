@@ -142,6 +142,41 @@ class era5(object):
                 cds_dict.pop('pressure_level')
         os.chdir(cwd)
 
+def F_download_era5(era5_dir,fn_header,west,east,south,north,
+                    start_year,start_month,end_year=None,end_month=None,
+                    download_start_hour=0,download_end_hour=23,
+                    file_collection_names = ['reanalysis-era5-pressure-levels','reanalysis-era5-single-levels'],
+                    file_collection_fields=[['u_component_of_wind','v_component_of_wind'],
+                        ['boundary_layer_height','surface_pressure','10m_u_component_of_wind','10m_v_component_of_wind',
+                         '100m_u_component_of_wind','100m_v_component_of_wind',
+                         '2m_temperature','skin_temperature']]):
+    from calendar import monthrange
+    if end_year is None:
+        end_year = start_year;end_month = start_month
+    e = era5(era5_dir=era5_dir,west=west,east=east,south=south,north=north)
+    failed_month_list = []
+    for year in range(start_year,end_year+1):
+        for month in range(1,13):
+            if year == start_year and month < start_month:
+                continue
+            elif year == end_year and month > end_month:
+                continue
+            # set temporal extent
+            e.F_set_time_bound(start_year=year,start_month=month,start_day=1,\
+                               start_hour=0,start_minute=0,start_second=0,\
+                               end_year=year,end_month=month,end_day=monthrange(year,month)[-1],\
+                               end_hour=23,end_minute=0,end_second=0)
+            try:
+                # download
+                e.F_download_era5(file_collection_names=file_collection_names,
+                                  file_collection_fields=file_collection_fields,
+                                  download_start_hour=download_start_hour,
+                                  download_end_hour=download_end_hour,
+                                  fn_header=fn_header)
+            except:
+                failed_month_list.append((year,month))
+                continue
+    return failed_month_list
 # # the following snippet is an example
 # from calendar import monthrange
 # # path to save era5 data
