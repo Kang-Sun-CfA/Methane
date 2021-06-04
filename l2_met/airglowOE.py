@@ -17,10 +17,110 @@ import logging
 import warnings
 import inspect
 from collections import OrderedDict
+from calendar import monthrange
 
 from hapi import db_begin, fetch, arange_, absorptionCoefficient_Doppler, \
 absorptionCoefficient_Voigt, absorptionCoefficient_Voigt_jac
 
+def F_generate_control(if_save_txt,
+                       hapi_directory,
+                       airglowOE_directory,
+                       save_directory,
+                       hitran_database_path,
+                       sciamachy_l1b_path,
+                       control_txt_fn=None,file_suffix='_airglow_level2',
+                       if_save_single_pixel_file=False,
+                       if_verbose=False,
+                       if_use_msis=True,
+                       delta_start_wavelength=1240.,
+                       delta_end_wavelength=1300.,
+                       delta_min_th=35.,
+                       delta_max_th=100.,
+                       delta_min_th_mlt=60.,
+                       delta_max_th_mlt=120.,
+                       delta_w1_step=-0.001,
+                       delta_r_per_e=2e8,
+                       delta_nO2Scale=6,
+                       delta_nO2Scale_mlt=0,
+                       delta_iy0=0,delta_iy1=100,
+                       delta_ix0=0,delta_ix1=100,
+                       if_A_band=True,
+                       sigma_start_wavelength=759.,
+                       sigma_end_wavelength=1300.,
+                       sigma_min_th=60.,
+                       sigma_max_th=100.,
+                       sigma_min_th_mlt=60.,
+                       sigma_max_th_mlt=120.,
+                       sigma_w1_step=-0.0002,
+                       sigma_r_per_e=1e7,
+                       sigma_nO2Scale=6,
+                       sigma_nO2Scale_mlt=6,
+                       sigma_iy0=0,sigma_iy1=100,
+                       sigma_ix0=0,sigma_ix1=100,):
+    import yaml
+    control = {}
+    control['hapi directory'] = hapi_directory
+    control['airglowOE directory'] = airglowOE_directory
+    control['save directory'] = save_directory
+    control['file suffix'] = file_suffix
+    control['if save single-pixel file'] = if_save_single_pixel_file
+    control['hitran database path'] = hitran_database_path
+    control['sciamachy file path'] = sciamachy_l1b_path
+    control['if verbose'] = if_verbose
+    # use msis model pressure and O2 number density or not
+    control['if use msis'] = if_use_msis
+    # start/end wavelengths in nm
+    control['delta start wavelength'] = delta_start_wavelength
+    control['delta end wavelength'] = delta_end_wavelength
+    # min/max tangent heights in km
+    control['delta min tangent height'] = delta_min_th
+    control['delta max tangent height'] = delta_max_th
+    # min/max tangent heights in km for mesosphere-lower thermosphere orbits
+    control['delta min tangent height mlt'] = delta_min_th_mlt
+    control['delta max tangent height mlt'] = delta_max_th_mlt
+    # forward mode wavelength step, has to be negative
+    control['delta w1 step'] = delta_w1_step
+    # detector response, used to estimate shot noise
+    control['delta radiance per electron'] = delta_r_per_e
+    control['delta number of loosen O2 layers'] = delta_nO2Scale
+    control['delta number of loosen O2 layers mlt'] = delta_nO2Scale_mlt
+    
+    control['delta start along-track (0-based)'] = delta_iy0
+    control['delta end along-track (0-based)'] = delta_iy1
+    
+    control['delta start across-track (0-based)'] = delta_ix0
+    control['delta end across-track (0-based)'] = delta_ix1
+    
+    control['if A band'] = if_A_band
+    
+    # start/end wavelengths in nm
+    control['sigma start wavelength'] = sigma_start_wavelength
+    control['sigma end wavelength'] = sigma_end_wavelength
+    # min/max tangent heights in km
+    control['sigma min tangent height'] = sigma_min_th
+    control['sigma max tangent height'] = sigma_max_th
+    # min/max tangent heights in km for mesosphere-lower thermosphere orbits
+    control['sigma min tangent height mlt'] = sigma_min_th_mlt
+    control['sigma max tangent height mlt'] = sigma_max_th_mlt
+    # forward mode wavelength step, has to be negative
+    control['sigma w1 step'] = sigma_w1_step
+    # detector response, used to estimate shot noise
+    control['sigma radiance per electron'] = sigma_r_per_e
+    control['sigma number of loosen O2 layers'] = sigma_nO2Scale
+    control['sigma number of loosen O2 layers mlt'] = sigma_nO2Scale_mlt
+    
+    control['sigma start along-track (0-based)'] = sigma_iy0
+    control['sigma end along-track (0-based)'] = sigma_iy1
+    
+    control['sigma start across-track (0-based)'] = sigma_ix0
+    control['sigma end across-track (0-based)'] = sigma_ix1
+    if if_save_txt:
+        if control_txt_fn is None:control_txt_fn='control.txt'
+        with open(control_txt_fn,'w') as stream:
+            yaml.dump(control,stream,sort_keys=False)
+    else:
+        return control
+    
 def F_distance(lat1,lon1,lat2,lon2):
     from math import sin, cos, sqrt, atan2, radians
     
@@ -348,7 +448,7 @@ class sciaOrbit():
 
 def F_airglow_forward_model(w1,wavelength,L,p_profile,
                             nO2s_profile,T_profile,HW1E,w_shift,
-                            nu=[],einsteinA=None):
+                            nu=[],einsteinA=None,nO2_profile=None):
     '''
     forward model to simulate scia-observed limb spectra for a profile scan
     output jacobians
@@ -368,10 +468,12 @@ def F_airglow_forward_model(w1,wavelength,L,p_profile,
     emission_ = np.zeros((nth,nw1))
     dedT_ = np.zeros((nth,nw1))
     dednO2s_ = np.zeros((nth,nw1))
+    if nO2_profile is None:
+        nO2_profile = [None]*nth
     # get xsection (sigma_), emission, and jacobians of emission for each layer
     for ith in range(nth):
         l = layer(p=p_profile[ith],T=T_profile[ith],
-                  minWavelength=np.min(w1),maxWavelength=np.max(w1),einsteinA=einsteinA)
+                  minWavelength=np.min(w1),maxWavelength=np.max(w1),einsteinA=einsteinA,nO2=nO2_profile[ith])
         l.getAbsorption(nu=nu)
         sigma_[ith,] = l.sigma*l.nO2# this is optical depth divided by length
         dsigmadT_[ith,] = l.dsigmadT*l.nO2-l.sigma*l.p/1.38065e-23*0.2095*1e-6/l.T**2# this is d(optical depth divided by length)/dT
@@ -440,7 +542,7 @@ def F_airglow_forward_model(w1,wavelength,L,p_profile,
 def F_airglow_forward_model_nO2Scale(w1,wavelength,L,p_profile,
                                nO2s_profile,T_profile,HW1E,w_shift,
                                nO2Scale_profile,T_profile_reference=[],
-                               nu=[],einsteinA=None):
+                               nu=[],einsteinA=None,nO2_profile=None):
     '''
     forward model to simulate scia-observed limb spectra for a profile scan
     output jacobians
@@ -463,8 +565,11 @@ def F_airglow_forward_model_nO2Scale(w1,wavelength,L,p_profile,
     emission_ = np.zeros((nth,nw1))
     dedT_ = np.zeros((nth,nw1))
     dednO2s_ = np.zeros((nth,nw1))
-    # this is O2 number density from ideal gas law
-    nO2_profile_full = np.array([p_profile[i]/T_profile_reference[i]/1.38065e-23*0.2095*1e-6 for i in range(len(T_profile))])
+    if nO2_profile is None:
+        # this is O2 number density from ideal gas law
+        nO2_profile_full = np.array([p_profile[i]/T_profile_reference[i]/1.38065e-23*0.2095*1e-6 for i in range(len(T_profile))])
+    else:
+        nO2_profile_full = nO2_profile
     n_nO2 = len(nO2Scale_profile)
     nO2Scale_profile_full = np.ones_like(T_profile)
     nO2Scale_profile_full[0:n_nO2] = nO2Scale_profile
@@ -552,7 +657,7 @@ def F_airglow_forward_model_nO2Scale(w1,wavelength,L,p_profile,
 
 def F_airglow_forward_model_no_absorption(w1,wavelength,L,p_profile,
                                           nO2s_profile,T_profile,HW1E,w_shift,
-                                          nu=[],einsteinA=None):
+                                          nu=[],einsteinA=None,nO2_profile=None):
     '''
     forward model to simulate scia-observed limb spectra for a profile scan
     output jacobians
@@ -571,10 +676,12 @@ def F_airglow_forward_model_no_absorption(w1,wavelength,L,p_profile,
     emission_ = np.zeros((nth,nw1))
     dedT_ = np.zeros((nth,nw1))
     dednO2s_ = np.zeros((nth,nw1))
+    if nO2_profile is None:
+        nO2_profile = [None]*nth
     # get xsection (sigma_), emission, and jacobians of emission for each layer
     for ith in range(nth):
         l = layer(p=p_profile[ith],T=T_profile[ith],
-                  minWavelength=np.min(w1),maxWavelength=np.max(w1),einsteinA=einsteinA)
+                  minWavelength=np.min(w1),maxWavelength=np.max(w1),einsteinA=einsteinA,nO2=nO2_profile[ith])
         l.getAbsorption(nu=nu)
         sigma_[ith,] = l.sigma*l.nO2# this is optical depth divided by length
         l.getAirglowEmission(nO2s=nO2s_profile[ith])
@@ -889,7 +996,7 @@ class Forward_Model(object):
 
 def F_sample_standard_atm(tangent_height):
     '''
-    sample prior information at tangent height
+    sample prior information at tangent height using US standard atmosphere
     '''
     from scipy.interpolate import interp1d
     z_grid = np.array([20,21,22,23,24,25,27.5,30,32.5,35,37.5,40,42.5,45,47.5,50,55,60,65,70,75,80,85,	90,95,100,105,110,115,120])
@@ -902,12 +1009,46 @@ def F_sample_standard_atm(tangent_height):
     T_profile = f(tangent_height)
     return p_profile, T_profile
 
+def F_msis_atm(tangent_height,latitude,longitude,time):
+    '''
+    atmospheric information from MSIS model
+    '''
+    import msise00
+    # pooor data type handling
+    latitude = latitude.astype(float)
+    longitude = longitude.astype(float)
+    ref_dt = dt.datetime(2000,1,1,0,0,0)
+    p_profile = np.zeros_like(tangent_height)
+    T_profile = np.zeros_like(tangent_height)
+    nO2_profile = np.zeros_like(tangent_height)
+    for ith in range(len(tangent_height)):
+        atmos = msise00.run(time=ref_dt+dt.timedelta(seconds=time[ith]),altkm=tangent_height[ith],glat=latitude[ith],glon=longitude[ith])
+        T_profile[ith] = np.array(atmos['Tn'].squeeze())
+        total_density = np.array(atmos['Total'].squeeze())#kg/m3
+        p_profile[ith] = total_density*287.058*T_profile[ith]
+        nO2_profile[ith] = np.array(atmos['O2'].squeeze())*1e-6#molec/cm3
+    return p_profile, T_profile, nO2_profile
+
+def F_th_to_Hlayer(th):
+    dth = np.nanmean(np.diff(th))
+    Hlayer = th+dth/2
+    return Hlayer
+def F_th_to_Hlevel(th):
+    dth = np.nanmean(np.diff(th))
+    Hlevel = np.append(th,th[-1]+dth)
+    return Hlevel
 def F_fit_profile(tangent_height,radiance,radiance_error,wavelength,
                   startWavelength=1240,endWavelength=1300,
                   minTH=None,maxTH=None,w1_step=None,einsteinA=None,
                   if_attenuation=True,n_nO2=0,nO2Scale_error=0.1,
-                  max_iter=10):
+                  max_iter=10,msis_pt=True,time=None,latitude=None,longitude=None):
     
+    if time is None:
+        logging.warning('Time is needed to use MSIS!')
+        msis_pt = False
+    if latitude is None or longitude is None:
+        logging.warning('lat/lon is needed to use MSIS!')
+        msis_pt = False
     if endWavelength < 800:
         HW1E_prior = 0.3
         if minTH is None:
@@ -954,7 +1095,26 @@ def F_fit_profile(tangent_height,radiance,radiance_error,wavelength,
     rg = 4*np.pi*np.linalg.inv(L.T@np.linalg.inv(So)@L)@L.T@np.linalg.inv(So)@radiance
     nO2s_profile = np.trapz(rg,wavelength)/einsteinA
     nO2s_profile[nO2s_profile < 0] = 0
-    p_profile, T_profile = F_sample_standard_atm(tangent_height)
+    if msis_pt:
+        try: 
+            p_profile, T_profile_msis, nO2_profile = F_msis_atm(F_th_to_Hlayer(tangent_height),latitude,longitude,time)
+            _, T_profile = F_sample_standard_atm(F_th_to_Hlayer(tangent_height))# T_profile is constant a priori from standar atmosphere
+        except:
+            logging.warning('MSIS doesn''t work!')
+            logging.warning("MSIS error message:", sys.exc_info())
+            msis_pt = False
+    if msis_pt:
+        if any(np.isnan(np.concatenate((p_profile,T_profile_msis,nO2_profile)))):
+            logging.warning('MSIS contains nan values! Use standard atmosphere')
+            msis_pt = False
+    if not msis_pt:
+        logging.info('Use standard atmosphere for p, T, nO2.')
+        p_profile, T_profile = F_sample_standard_atm(tangent_height)
+        nO2_profile = p_profile/T_profile/1.38065e-23*0.2095*1e-6# O2 number density in molecules/cm3, ideal gas law
+    # this if statement makes msis temperature as prior
+    if msis_pt:
+        T_profile = T_profile_msis.copy()
+        # del T_profile_msis
     # w1 is the high res wavelength grid. has to be descending
     w1 = arange_(endWavelength,startWavelength,-np.abs(w1_step))#-0.0005
     T_profile_e = np.ones(T_profile.shape)*20
@@ -965,57 +1125,63 @@ def F_fit_profile(tangent_height,radiance,radiance_error,wavelength,
     
     if not if_attenuation:
         aOE = Forward_Model(func=F_airglow_forward_model_no_absorption,
-                                  independent_vars=['w1','wavelength','L','p_profile','nu','einsteinA'],
+                                  independent_vars=['w1','wavelength','L','p_profile','nu','einsteinA','nO2_profile'],
                                   param_names=['nO2s_profile','T_profile','HW1E','w_shift'])
-        aOE.set_prior('nO2s_profile',prior=nO2s_profile,prior_error=nO2s_profile_e,p_profile=p_profile_middle,correlation_scaleHeight=1)
-        aOE.set_prior('T_profile',prior=T_profile,prior_error=T_profile_e,p_profile=p_profile_middle,correlation_scaleHeight=1,vmin=50,vmax=500)
+        aOE.set_prior('nO2s_profile',prior=nO2s_profile,prior_error=nO2s_profile_e,p_profile=p_profile,correlation_scaleHeight=1)
+        aOE.set_prior('T_profile',prior=T_profile,prior_error=T_profile_e,p_profile=p_profile,correlation_scaleHeight=1,vmin=50,vmax=500)
         aOE.set_prior('HW1E',prior=HW1E_prior,prior_error=HW1E_prior/2)
         aOE.set_prior('w_shift',prior=0.,prior_error=1.)
         result = aOE.retrieve(radiance,radiance_error,max_iter=max_iter,
                               w1=w1,wavelength=wavelength,
-                              L=L,p_profile=p_profile_middle,einsteinA=einsteinA)
+                              L=L,p_profile=p_profile,einsteinA=einsteinA,nO2_profile=nO2_profile)
         result.tangent_height = tangent_height
         result.THMask = THMask
         result.dZ = dZ
         result.p_profile_middle = p_profile_middle
         result.p_profile = p_profile
         result.T_profile_prior = T_profile
+        if 'T_profile_msis' in locals().keys():
+            result.T_profile_msis = T_profile_msis
         result.nO2s_profile_prior = nO2s_profile
+        result.nO2_profile= nO2_profile
         return result
     
     if n_nO2 == 0:
         aOE = Forward_Model(func=F_airglow_forward_model,
-                                  independent_vars=['w1','wavelength','L','p_profile','nu','einsteinA'],
+                                  independent_vars=['w1','wavelength','L','p_profile','nu','einsteinA','nO2_profile'],
                                   param_names=['nO2s_profile','T_profile','HW1E','w_shift'])
-        aOE.set_prior('nO2s_profile',prior=nO2s_profile,prior_error=nO2s_profile_e,p_profile=p_profile_middle,correlation_scaleHeight=1)
-        aOE.set_prior('T_profile',prior=T_profile,prior_error=T_profile_e,p_profile=p_profile_middle,correlation_scaleHeight=1,vmin=50,vmax=500)
+        aOE.set_prior('nO2s_profile',prior=nO2s_profile,prior_error=nO2s_profile_e,p_profile=p_profile,correlation_scaleHeight=1)
+        aOE.set_prior('T_profile',prior=T_profile,prior_error=T_profile_e,p_profile=p_profile,correlation_scaleHeight=1,vmin=50,vmax=500)
         aOE.set_prior('HW1E',prior=HW1E_prior,prior_error=HW1E_prior/2)
         aOE.set_prior('w_shift',prior=0.,prior_error=1.)
         result = aOE.retrieve(radiance,radiance_error,max_iter=max_iter,
                               w1=w1,wavelength=wavelength,
-                              L=L,p_profile=p_profile_middle,einsteinA=einsteinA)
+                              L=L,p_profile=p_profile,einsteinA=einsteinA,nO2_profile=nO2_profile)
     else:
         nO2Scale_profile = np.ones(n_nO2)
         nO2Scale_profile_e = np.ones(n_nO2)*nO2Scale_error
         aOE = Forward_Model(func=F_airglow_forward_model_nO2Scale,
-                                  independent_vars=['w1','wavelength','L','p_profile','nu','T_profile_reference','einsteinA'],
+                                  independent_vars=['w1','wavelength','L','p_profile','nu','T_profile_reference','einsteinA','nO2_profile'],
                                   param_names=['nO2s_profile','T_profile','HW1E','w_shift','nO2Scale_profile'])
-        aOE.set_prior('nO2s_profile',prior=nO2s_profile,prior_error=nO2s_profile_e,p_profile=p_profile_middle,correlation_scaleHeight=1)
-        aOE.set_prior('T_profile',prior=T_profile,prior_error=T_profile_e,p_profile=p_profile_middle,correlation_scaleHeight=1,vmin=50,vmax=500)
+        aOE.set_prior('nO2s_profile',prior=nO2s_profile,prior_error=nO2s_profile_e,p_profile=p_profile,correlation_scaleHeight=1)
+        aOE.set_prior('T_profile',prior=T_profile,prior_error=T_profile_e,p_profile=p_profile,correlation_scaleHeight=1,vmin=50,vmax=500)
         aOE.set_prior('HW1E',prior=HW1E_prior,prior_error=HW1E_prior/2)
         aOE.set_prior('w_shift',prior=0.,prior_error=1.)
         aOE.set_prior('nO2Scale_profile',prior=nO2Scale_profile,prior_error=nO2Scale_profile_e,
-                      p_profile=p_profile_middle[0:len(nO2Scale_profile)],correlation_scaleHeight=1,vmin=0,vary=True)
+                      p_profile=p_profile[0:len(nO2Scale_profile)],correlation_scaleHeight=1,vmin=0,vary=True)
         result = aOE.retrieve(radiance,radiance_error,max_iter=max_iter,
                               w1=w1,wavelength=wavelength,
-                              L=L,p_profile=p_profile_middle,einsteinA=einsteinA)
+                              L=L,p_profile=p_profile,einsteinA=einsteinA,nO2_profile=nO2_profile)
     result.tangent_height = tangent_height
     result.THMask = THMask
     result.dZ = dZ
     result.p_profile_middle = p_profile_middle
     result.p_profile = p_profile
     result.T_profile_prior = T_profile
+    if 'T_profile_msis' in locals().keys():
+        result.T_profile_msis = T_profile_msis
     result.nO2s_profile_prior = nO2s_profile
+    result.nO2_profile = nO2_profile
     return result
 
 class Level2_Reader(object):
@@ -1183,6 +1349,16 @@ class Level2_Saver(object):
         self.d_T_e.units = 'K'
         self.d_T_e._Storage = 'contiguous'
         
+        self.d_T_msis = self.ncdelta.createVariable('temperature_msis',np.float32,dimensions=('along_track','across_track','vertical'),fill_value=-1.0e+30)
+        self.d_T_msis.comment = 'temperature from NRLMSISE-00 model'
+        self.d_T_msis.units = 'K'
+        self.d_T_msis._Storage = 'contiguous'
+        
+        self.d_nO2_msis = self.ncdelta.createVariable('O2_msis',np.float32,dimensions=('along_track','across_track','vertical'),fill_value=-1.0e+30)
+        self.d_nO2_msis.comment = 'number density of O2 molecules'
+        self.d_nO2_msis.units = 'molec/cm3'
+        self.d_nO2_msis._Storage = 'contiguous'
+        
         self.d_HW1E = self.ncdelta.createVariable('HW1E',np.float32,dimensions=('along_track','across_track'),fill_value=-1.0e+30)
         self.d_HW1E.comment = 'half width at 1/e of maximum of slit function'
         self.d_HW1E.units = 'nm'
@@ -1281,6 +1457,16 @@ class Level2_Saver(object):
         self.s_T_e.comment = 'posterior uncertainty for temperature'
         self.s_T_e.units = 'K'
         self.s_T_e._Storage = 'contiguous'
+        
+        self.s_T_msis = self.ncsigma.createVariable('temperature_msis',np.float32,dimensions=('along_track','across_track','vertical'),fill_value=-1.0e+30)
+        self.s_T_msis.comment = 'temperature from NRLMSISE-00 model'
+        self.s_T_msis.units = 'K'
+        self.s_T_msis._Storage = 'contiguous'
+        
+        self.s_nO2_msis = self.ncsigma.createVariable('O2_msis',np.float32,dimensions=('along_track','across_track','vertical'),fill_value=-1.0e+30)
+        self.s_nO2_msis.comment = 'number density of O2 molecules'
+        self.s_nO2_msis.units = 'molec/cm3'
+        self.s_nO2_msis._Storage = 'contiguous'
         
         self.s_HW1E = self.ncsigma.createVariable('HW1E',np.float32,dimensions=('along_track','across_track'),fill_value=-1.0e+30)
         self.s_HW1E.comment = 'half width at 1/e of maximum of slit function'
@@ -1400,10 +1586,12 @@ class Level2_Regridder(object):
                  grid_size=1,grid_sizex=None,grid_sizey=None,
                  lower_z=60.,upper_z=120.,dz=5,
                  start_year=2004,start_month=1,start_day=1,
-                 end_year=2012,end_month=12,end_day=31):
+                 end_year=2012,end_month=12,end_day=None):
         '''
         initialize properties
         '''
+        if end_day is None:
+            end_day = monthrange(end_year,end_month)[-1]
         self.logger = logging.getLogger(__name__)
         self.logger.info('creating an instance of Level2_Regridder')
         if grid_sizex is None:
