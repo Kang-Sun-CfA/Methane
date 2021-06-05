@@ -19,8 +19,16 @@ import inspect
 from collections import OrderedDict
 from calendar import monthrange
 
-from hapi import db_begin, fetch, arange_, absorptionCoefficient_Doppler, \
-absorptionCoefficient_Voigt, absorptionCoefficient_Voigt_jac
+# In this "robust" version of arange the grid doesn't suffer 
+# from the shift of the nodes due to error accumulation.
+# This effect is pronounced only if the step is sufficiently small.
+def arange_(lower,upper,step,dtype=None):
+    npnt = np.floor((upper-lower)/step)+1
+    upper_new = lower + step*(npnt-1)
+    if np.abs((upper-upper_new)-step) < 1e-10:
+        upper_new += step
+        npnt += 1    
+    return np.linspace(lower,upper_new,int(npnt),dtype=dtype)
 
 def F_generate_control(if_save_txt,
                        hapi_directory,
@@ -120,7 +128,38 @@ def F_generate_control(if_save_txt,
             yaml.dump(control,stream,sort_keys=False)
     else:
         return control
-    
+
+def datetime2datenum(python_datetime):
+    '''
+    convert python datetime to matlab datenum
+    '''
+    matlab_datenum = python_datetime.toordinal()\
+                                        +python_datetime.hour/24.\
+                                        +python_datetime.minute/1440.\
+                                        +python_datetime.second/86400.+366.
+    return matlab_datenum
+
+def F_read_sofie(fn,varnames=['Temperature','Temperature_precision',
+                              'Latitude_83km','Longitude_83km','Time_83km',
+                              'Pressure','Altitude','CH4_vmr']):
+    '''
+    read sofie file name, fn
+    return dict
+    '''
+    from scipy.io import netcdf
+    import time
+    f = netcdf.netcdf_file(fn,'r')
+    outp = {}
+    for varname in varnames:
+        outp[varname] = f.variables[varname][:].copy()
+        if hasattr(f.variables[varname],'fill_value'):
+            outp[varname][outp[varname]==f.variables[varname].fill_value] = np.nan
+        if varname == 'Time_83km':
+            outp['times2000'] = np.array([s-time.mktime(dt.datetime(2000, 1, 1).timetuple()) for s in outp[varname]])
+            outp['python_datetime'] = np.array([dt.datetime(1970,1,1)+dt.timedelta(seconds=s) for s in outp[varname]])
+            outp['matlab_datenum'] = np.array([datetime2datenum(pdt) for pdt in outp['python_datetime']])
+    f.close()
+    return outp
 def F_distance(lat1,lon1,lat2,lon2):
     from math import sin, cos, sqrt, atan2, radians
     
@@ -138,6 +177,91 @@ def F_distance(lat1,lon1,lat2,lon2):
     
     distance = R * c
     return distance
+
+def F_scia_sofie_collocation(sofie_dir,
+                             scia_path_pattern='/projects/academic/kangsun/data/SCIAMACHY/%Y/%m/%d/SCI_%Y%m%d*.nc',
+                             save_csv_path=None,
+                             time_hr=2.5,space_km=100,
+                             start_year=None,start_month=None,start_day=None,
+                             end_year=None,end_month=None,end_day=None):
+    collocation_info = []
+    datetime_2000 = dt.datetime(2000,1,1)
+    datenum_2000 = datetime2datenum(datetime_2000)
+    if start_year is not None:
+        start_date = dt.date(start_year,start_month,start_day)
+        end_date = dt.date(end_year,end_month,end_day)
+    else:
+        start_date = None
+        end_date = None
+    for sofie_fn in glob.glob(os.path.join(sofie_dir,'SOFIE_Level2_*_01.3.nc')):
+        sofie_year = int(os.path.split(sofie_fn)[-1][13:17])
+        sofie_doy = int(os.path.split(sofie_fn)[-1][17:20])
+        sofie_date = dt.datetime(sofie_year, 1, 1) + dt.timedelta(sofie_doy - 1)
+        sofie_date = sofie_date.date()
+        if start_date is not None:
+            if sofie_date < start_date:
+                continue
+        if end_date is not None:
+            if sofie_date > end_date:
+                continue
+        logging.info('loading {}'.format(sofie_fn))
+        sofie = F_read_sofie(sofie_fn)
+        sofie['Longitude_83km'][sofie['Longitude_83km']>180]=sofie['Longitude_83km'][sofie['Longitude_83km']>180]-360
+        # just in case there are scia pixels in files one day before and one day after
+        scia_flist = glob.glob(sofie_date.strftime(scia_path_pattern))
+        scia_flist_tomorrow = glob.glob((sofie_date+dt.timedelta(days=1)).strftime(scia_path_pattern))
+        if len(scia_flist_tomorrow) > 0:
+            scia_flist_tomorrow_dt = [dt.datetime.strptime(os.path.split(fn)[-1][4:19],'%Y%m%dT%H%M%S') for fn in scia_flist_tomorrow]
+            scia_flist.append(scia_flist_tomorrow[np.argmin(scia_flist_tomorrow_dt)])
+        scia_flist_yesterday = glob.glob((sofie_date-dt.timedelta(days=1)).strftime(scia_path_pattern))
+        if len(scia_flist_yesterday) > 0:
+            scia_flist_yesterday_dt = [dt.datetime.strptime(os.path.split(fn)[-1][4:19],'%Y%m%dT%H%M%S') for fn in scia_flist_yesterday]
+            scia_flist = [scia_flist_yesterday[np.argmax(scia_flist_yesterday_dt)]]+scia_flist
+        for scia_fn in scia_flist:
+            logging.info('loading {}'.format(scia_fn))
+            s = sciaOrbit(scia_fn)
+            s.loadData()
+            granules = s.divideProfiles()
+            orbitLat = np.array([g['latitude'][0,] for g in granules])
+            orbitLon = np.array([g['longitude'][0,] for g in granules])
+            orbitDatenum = np.array([g['time'][0,]/86400+datenum_2000 for g in granules])
+            orbitDatenum=np.repeat(orbitDatenum[...,np.newaxis],orbitLat.shape[1],axis=1)
+            for (isofie,sofie_datenum) in enumerate(sofie['matlab_datenum']):
+                timemask = np.abs(sofie['matlab_datenum'][isofie]-orbitDatenum)*24 <= time_hr
+                if np.sum(timemask) == 0:
+                    continue
+                sofie_lat = sofie['Latitude_83km'][isofie]
+                sofie_lon = sofie['Longitude_83km'][isofie]
+                dists = []
+                for ltrack in range(orbitLat.shape[0]):
+                    dist=np.array([F_distance(sofie_lat,sofie_lon,slat,slon) for slat,slon in zip(orbitLat[ltrack,],orbitLon[ltrack,])]) 
+                    dists.append(dist)
+                dists = np.array(dists)
+                spacemask = dists <= space_km
+                minmask = dists==np.min(dists)
+                allmask = minmask&spacemask&timemask
+                if np.sum(allmask) == 0:
+                    continue
+                scia_collocation = np.where(allmask)
+                scia_iy = scia_collocation[0][0]
+                scia_ix = scia_collocation[1][0]
+                collocation_info.append({'scia path':scia_fn,
+                                        'scia iy':scia_iy,
+                                        'scia ix':scia_ix,
+                                        'scia lat':orbitLat[scia_iy,scia_ix],
+                                        'scia lon':orbitLon[scia_iy,scia_ix],
+                                        'scia datenum':orbitDatenum[scia_iy,scia_ix],
+                                        'sofie path':sofie_fn,
+                                        'sofie pixel':isofie,
+                                        'sofie lat':sofie_lat,
+                                        'sofie lon':sofie_lon,
+                                        'sofie datenum':sofie_datenum,
+                                        'distance (km)':dists[scia_iy,scia_ix]})
+    df = pd.DataFrame.from_dict(collocation_info)
+    if save_csv_path is None:
+        return df
+    else:
+        df.to_csv(save_csv_path)
 
 class layer():
     
@@ -177,7 +301,9 @@ class layer():
         self.minWavenumber = 1e7/maxWavelength
         self.maxWavenumber = 1e7/minWavelength
         
-    def getAbsorption(self,nu=None,finiteDifference=True,dT=0.01,WavenumberWing=3.,sourceTableName=None):
+    def getAbsorption(self,nu=None,
+                      finiteDifference=True,dT=0.01,
+                      WavenumberWing=3.,sourceTableName=None):
         '''
         call hapi line by line function to calculate absorption
         nu:
@@ -189,6 +315,7 @@ class layer():
         WavenumberWing:
             window width input to hapi to calculate line profile
         '''
+        from hapi import absorptionCoefficient_Voigt, absorptionCoefficient_Voigt_jac
         if sourceTableName == None:
             sourceTableName = 'O2_{:.1f}-{:.1f}'.format(self.minWavelength,self.maxWavelength)
         if nu is None:
