@@ -183,7 +183,8 @@ def F_scia_sofie_collocation(sofie_dir,
                              save_csv_path=None,
                              time_hr=2.5,space_km=100,
                              start_year=None,start_month=None,start_day=None,
-                             end_year=None,end_month=None,end_day=None):
+                             end_year=None,end_month=None,end_day=None,
+                             if_exclude_MLT=True):
     collocation_info = []
     datetime_2000 = dt.datetime(2000,1,1)
     datenum_2000 = datetime2datenum(datetime_2000)
@@ -220,6 +221,10 @@ def F_scia_sofie_collocation(sofie_dir,
         for scia_fn in scia_flist:
             logging.info('loading {}'.format(scia_fn))
             s = sciaOrbit(scia_fn)
+            if if_exclude_MLT:
+                if s.ifMLT():
+                    logging.info('this orbit appears to be MLT and will be skipped')
+                    continue
             s.loadData()
             granules = s.divideProfiles()
             orbitLat = np.array([g['latitude'][0,] for g in granules])
@@ -238,7 +243,7 @@ def F_scia_sofie_collocation(sofie_dir,
                     dists.append(dist)
                 dists = np.array(dists)
                 spacemask = dists <= space_km
-                minmask = dists==np.min(dists)
+                minmask = dists==np.nanmin(dists)
                 allmask = minmask&spacemask&timemask
                 if np.sum(allmask) == 0:
                     continue
@@ -262,6 +267,130 @@ def F_scia_sofie_collocation(sofie_dir,
         return df
     else:
         df.to_csv(save_csv_path)
+
+def F_read_ace(fn,varnames=['temperature','temperature_fit','pressure'],
+               start_datetime=None,end_datetime=None,max_quality_flag=4):
+    ace_fid = Dataset(fn)
+    years = np.array(ace_fid['year'][:].squeeze(),dtype=np.int)
+    months = np.array(ace_fid['month'][:].squeeze(),dtype=np.int)
+    days = np.array(ace_fid['day'][:].squeeze(),dtype=np.int)
+    hours = np.array(ace_fid['hour'][:].squeeze(),dtype=np.float)
+    ace_datetime = np.array([dt.datetime(years[i],months[i],days[i])+dt.timedelta(hours=hours[i])
+                             for i in range(len(ace_fid['year'][:]))])
+    ace_datenum = np.array([datetime2datenum(d) for d in ace_datetime])
+    ace_index = np.arange(len(ace_datenum))
+    if start_datetime is not None:
+        time_mask = (ace_datenum > datetime2datenum(start_datetime)) \
+            & (ace_datenum < datetime2datenum(end_datetime))
+    else:
+        time_mask = np.ones(ace_datenum.shape,dtype=np.bool)
+    ace_lon = ace_fid['longitude'][:].filled(np.nan).squeeze()[time_mask]
+    ace_lon[ace_lon<-180] = ace_lon[ace_lon<-180]+360
+    ace_lat = ace_fid['latitude'][:].filled(np.nan).squeeze()[time_mask]
+    ace = {}
+    ace['lon'] = ace_lon
+    ace['lat'] = ace_lat
+    ace['index'] = ace_index[time_mask]
+    ace['H'] = ace_fid['altitude'][:].filled(np.nan)
+    ace['matlab_datenum'] = ace_datenum[time_mask]
+    ace['python_datetime'] = ace_datetime[time_mask]
+    ace['orbit'] = ace_fid['orbit'][:].filled(np.nan).squeeze()[time_mask]
+    
+    for var in varnames:
+        if ace_fid[var][:].shape != (ace_fid['longitude'][:].shape[0],ace_fid['altitude'][:].shape(0)):
+            logging.warning('{}''s shape is not compatible, skipping'.format(var))
+            continue
+        ace[var] = ace_fid[var][:].filled(np.nan)
+        ace[var][ace_fid['quality_flag'][:]>max_quality_flag] = np.nan
+        ace[var] = ace[var][time_mask,]
+        
+    # ace['pressure'] = ace_fid['pressure'][:].filled(np.nan)[time_mask,]
+    ace_fid.close()
+    return ace
+    
+def F_scia_ace_collocation(ace_path,
+                           scia_path_pattern,
+                           save_csv_path=None,
+                           time_hr=2.5,space_km=500,
+                           start_year=None,start_month=None,start_day=None,
+                           end_year=None,end_month=None,end_day=None,
+                           if_exclude_MLT=True):
+    collocation_info = []
+    datetime_2000 = dt.datetime(2000,1,1)
+    datenum_2000 = datetime2datenum(datetime_2000)
+    if start_year is not None:
+        start_datetime = dt.datetime(start_year,start_month,start_day)
+        end_datetime = dt.datetime(end_year,end_month,end_day,23,59,59)
+    else:
+        start_datetime = None
+        end_datetime = None
+    ace = F_read_ace(ace_path,varnames=[],
+                     start_datetime=start_datetime,end_datetime=end_datetime)
+    if start_datetime is None:
+        start_datetime = ace['python_datetime'].min()
+        end_datetime = ace['python_datetime'].max()
+    start_date = start_datetime.date()
+    end_date = end_datetime.date()
+    days = (end_date-start_date).days+1
+    DATES = [start_date + dt.timedelta(days=d) for d in range(days)] 
+    scia_flist = []
+    for DATE in DATES:
+        scia_flist = scia_flist+glob.glob(DATE.strftime(scia_path_pattern))
+    for scia_fn in scia_flist:
+        logging.info('loading {}'.format(scia_fn))
+        s = sciaOrbit(scia_fn)
+        if if_exclude_MLT:
+            if s.ifMLT():
+                logging.info('this orbit appears to be MLT and will be skipped')
+                continue
+        s.loadData()
+        granules = s.divideProfiles()
+        orbitLat = np.array([g['latitude'][0,] for g in granules])
+        orbitLon = np.array([g['longitude'][0,] for g in granules])
+        orbitDatenum = np.array([g['time'][0,]/86400+datenum_2000 for g in granules])
+        orbitDatenum=np.repeat(orbitDatenum[...,np.newaxis],orbitLat.shape[1],axis=1)
+        ace_timemask = (ace['matlab_datenum'] > orbitDatenum.min()-time_hr/24) &\
+            (ace['matlab_datenum'] < orbitDatenum.max()+time_hr/24) & \
+                (~np.isnan(ace['lon'])) & (~np.isnan(ace['lat']))
+        ace_lon = ace['lon'][ace_timemask]
+        ace_lat = ace['lat'][ace_timemask]
+        ace_orbit = ace['orbit'][ace_timemask]
+        ace_index = ace['index'][ace_timemask]
+        ace_datenum = ace['matlab_datenum'][ace_timemask]
+        for iace, (alon,alat) in enumerate(zip(ace_lon,ace_lat)):
+            dists = np.array([[F_distance(slat,slon,alat,alon) for (slat,slon) in zip(lineLat,lineLon)]
+                     for (lineLat,lineLon) in zip(orbitLat,orbitLon)])
+            spacemask = dists <= space_km
+            minmask = dists==np.nanmin(dists)
+            timemask = np.abs(ace_datenum[iace]-orbitDatenum) < time_hr/24
+            allmask = minmask&spacemask
+            logging.info('min dist = {}'.format(np.nanmin(dists)))
+            # scia_collocation = np.where(allmask)
+            # scia_iy = scia_collocation[0][0]
+            # scia_ix = scia_collocation[1][0]
+            if np.sum(allmask) == 0:
+                continue
+            
+            scia_collocation = np.where(allmask)
+            scia_iy = scia_collocation[0][0]
+            scia_ix = scia_collocation[1][0]
+            collocation_info.append({'scia path':scia_fn,
+                                     'scia iy':scia_iy,
+                                     'scia ix':scia_ix,
+                                     'scia lat':orbitLat[scia_iy,scia_ix],
+                                     'scia lon':orbitLon[scia_iy,scia_ix],
+                                     'scia datenum':orbitDatenum[scia_iy,scia_ix],
+                                     'ace index':ace_index[iace],
+                                     'ace_orbit':ace_orbit[iace],
+                                     'ace lat':alat,
+                                     'ace lon':alon,
+                                     'ace datenum':ace_datenum[iace],
+                                     'distance (km)':dists[scia_iy,scia_ix]})
+    df = pd.DataFrame.from_dict(collocation_info)
+    if save_csv_path is None:
+        return df
+    else:
+        df.to_csv(save_csv_path)  
 
 class layer():
     
