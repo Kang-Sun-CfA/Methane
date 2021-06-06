@@ -147,7 +147,6 @@ def F_read_sofie(fn,varnames=['Temperature','Temperature_precision',
     return dict
     '''
     from scipy.io import netcdf
-    import time
     f = netcdf.netcdf_file(fn,'r')
     outp = {}
     for varname in varnames:
@@ -155,7 +154,8 @@ def F_read_sofie(fn,varnames=['Temperature','Temperature_precision',
         if hasattr(f.variables[varname],'fill_value'):
             outp[varname][outp[varname]==f.variables[varname].fill_value] = np.nan
         if varname == 'Time_83km':
-            outp['times2000'] = np.array([s-time.mktime(dt.datetime(2000, 1, 1).timetuple()) for s in outp[varname]])
+            seconds_1970_2000 = (dt.datetime(2000,1,1)-dt.datetime(1970,1,1)).total_seconds()
+            outp['times2000'] = np.array([s-seconds_1970_2000 for s in outp[varname]])
             outp['python_datetime'] = np.array([dt.datetime(1970,1,1)+dt.timedelta(seconds=s) for s in outp[varname]])
             outp['matlab_datenum'] = np.array([datetime2datenum(pdt) for pdt in outp['python_datetime']])
     f.close()
@@ -361,17 +361,13 @@ def F_scia_ace_collocation(ace_path,
             dists = np.array([[F_distance(slat,slon,alat,alon) for (slat,slon) in zip(lineLat,lineLon)]
                      for (lineLat,lineLon) in zip(orbitLat,orbitLon)])
             spacemask = dists <= space_km
-            minmask = dists==np.nanmin(dists)
             timemask = np.abs(ace_datenum[iace]-orbitDatenum) < time_hr/24
-            allmask = minmask&spacemask
-            logging.info('min dist = {}'.format(np.nanmin(dists)))
-            # scia_collocation = np.where(allmask)
-            # scia_iy = scia_collocation[0][0]
-            # scia_ix = scia_collocation[1][0]
-            if np.sum(allmask) == 0:
+            spacetimemask = spacemask&timemask
+            if np.sum(spacetimemask ) == 0:
                 continue
-            
-            scia_collocation = np.where(allmask)
+            dists[~spacetimemask] = np.nan
+            logging.info('min dist = {}'.format(np.nanmin(dists)))
+            scia_collocation = np.where(dists==np.nanmin(dists))
             scia_iy = scia_collocation[0][0]
             scia_ix = scia_collocation[1][0]
             collocation_info.append({'scia path':scia_fn,
