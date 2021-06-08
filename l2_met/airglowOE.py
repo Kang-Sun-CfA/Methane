@@ -297,11 +297,11 @@ def F_read_ace(fn,varnames=['temperature','temperature_fit','pressure'],
     ace['orbit'] = ace_fid['orbit'][:].filled(np.nan).squeeze()[time_mask]
     
     for var in varnames:
-        if ace_fid[var][:].shape != (ace_fid['longitude'][:].shape[0],ace_fid['altitude'][:].shape(0)):
+        if ace_fid[var][:].shape != (ace_fid['longitude'][:].shape[0],ace_fid['altitude'][:].shape[0]):
             logging.warning('{}''s shape is not compatible, skipping'.format(var))
             continue
         ace[var] = ace_fid[var][:].filled(np.nan)
-        ace[var][ace_fid['quality_flag'][:]>max_quality_flag] = np.nan
+        # ace[var][ace_fid['quality_flag'][:]>max_quality_flag] = np.nan
         ace[var] = ace[var][time_mask,]
         
     # ace['pressure'] = ace_fid['pressure'][:].filled(np.nan)[time_mask,]
@@ -377,7 +377,7 @@ def F_scia_ace_collocation(ace_path,
                                      'scia lon':orbitLon[scia_iy,scia_ix],
                                      'scia datenum':orbitDatenum[scia_iy,scia_ix],
                                      'ace index':ace_index[iace],
-                                     'ace_orbit':ace_orbit[iace],
+                                     'ace orbit':ace_orbit[iace],
                                      'ace lat':alat,
                                      'ace lon':alon,
                                      'ace datenum':ace_datenum[iace],
@@ -387,6 +387,179 @@ def F_scia_ace_collocation(ace_path,
         return df
     else:
         df.to_csv(save_csv_path)  
+
+class Collocated_Profile(dict):
+    def __init__(self,df_row):
+        self.logger = logging.getLogger(__name__)
+        self.scia_ix = df_row['scia ix']
+        self.scia_iy = df_row['scia iy']
+        self.scia_lon = df_row['scia lon']
+        self.scia_lat = df_row['scia lat']
+        self.scia_datenum = df_row['scia datenum']
+        self.scia_l1b_path = df_row['scia path']
+        if 'ace lat' in df_row.keys():
+            self.ace_lat = df_row['ace lat']
+            self.ace_lon = df_row['ace lon']
+            self.ace_datenum = df_row['ace datenum']
+            self.ace_index = df_row['ace index']
+        if 'sofie lat' in df_row.keys():
+            self.sofie_lat = df_row['sofie lat']
+            self.sofie_lon = df_row['sofie lon']
+            self.sofie_datenum = df_row['sofie datenum']
+            self.sofie_pixel = df_row['sofie pixel']
+            self.sofie_path = df_row['sofie path']
+    def read_scia_mat(self,scia_single_pixel_dir,sigma_or_delta='delta'):
+        from scipy.io import loadmat
+        scia_fn = os.path.splitext(os.path.split(self.scia_l1b_path)[-1])[0]+\
+            '_{}_{}_'.format(self.scia_iy,self.scia_ix)+sigma_or_delta+'.mat'
+        fn = os.path.join(scia_single_pixel_dir,scia_fn)
+        scia = loadmat(fn,squeeze_me=True)
+        self['th']=scia['tangent_height']
+        self['Hlayer'] = F_th_to_Hlayer(self['th'])
+        self['Hlevel'] = F_th_to_Hlevel(self['th'])
+        self[sigma_or_delta+'_T']=scia['temperature']
+        self[sigma_or_delta+'_T_dofs']=scia['temperature_dofs']
+        self['msis_T']=scia['temperature_msis']
+        self['lat'] = scia['latitude']
+        self['lon'] = scia['longitude']
+        self[sigma_or_delta+'_chi2'] = scia['chi2']
+        self[sigma_or_delta+'_rmse'] = scia['rmse']
+    def read_ace(self,ace_dict=None,fn=None):
+        if ace_dict is None:
+            ace = F_read_ace(fn)
+        else:
+            ace = ace_dict
+        self['ace_H'] = ace['H']
+        self['ace_T'] = ace['temperature'][self.ace_index,]
+        self['ace_T'][ace['temperature_fit'][self.ace_index,]==0] = np.nan
+    def read_sofie(self,sofie_dir=None):
+        if sofie_dir is None:
+            sofie_path = self.sofie_path
+        else:
+            sofie_path_split = os.path.split(self.sofie_path)
+            sofie_path = os.path.join(sofie_dir,sofie_path_split[-1])
+        sofie = F_read_sofie(sofie_path,varnames=['Temperature','Altitude'])
+        self['sofie_H'] = sofie['Altitude']
+        self['sofie_T'] = sofie['Temperature'][self.sofie_pixel,]
+    def compare(self,min_dofs=0.5):
+        from scipy.stats import binned_statistic
+        import warnings
+        if 'ace_H' in self.keys():
+            self.logger.info('matching ace with scia')
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", category=RuntimeWarning)
+                self['ace_binned_T'],_,_ = binned_statistic(self['ace_H'],self['ace_T'],statistic=np.nanmean,bins=self['Hlevel'])
+            if 'delta_T' in self.keys():
+                self['delta_minus_ace_T'] = self['delta_T']-self['ace_binned_T']
+                self['delta_minus_ace_T'][self['delta_T_dofs']<min_dofs] = np.nan
+            if 'sigma_T' in self.keys():
+                self['sigma_minus_ace_T'] = self['sigma_T']-self['ace_binned_T']
+                self['sigma_minus_ace_T'][self['sigma_T_dofs']<min_dofs] = np.nan
+            if 'msis_T' in self.keys():
+                self['msis_minus_ace_T'] = self['msis_T']-self['ace_binned_T']
+        if 'sofie_H' in self.keys():
+            self.logger.info('matching sofie with scia')
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", category=RuntimeWarning)
+                self['sofie_binned_T'],_,_ = binned_statistic(self['sofie_H'],self['sofie_T'],statistic=np.nanmean,bins=self['Hlevel'])
+            if 'delta_T' in self.keys():
+                self['delta_minus_sofie_T'] = self['delta_T']-self['sofie_binned_T']
+                self['delta_minus_sofie_T'][self['delta_T_dofs']<min_dofs] = np.nan
+            if 'sigma_T' in self.keys():
+                self['sigma_minus_sofie_T'] = self['sigma_T']-self['sofie_binned_T']
+                self['sigma_minus_sofie_T'][self['sigma_T_dofs']<min_dofs] = np.nan
+            if 'msis_T' in self.keys():
+                self['msis_minus_sofie_T'] = self['msis_T']-self['sofie_binned_T']
+    def plot_raw_profiles(self,existing_ax=None,
+                          which_sensor='ace',
+                          sigma_or_delta=None,
+                          size_legend=True):
+        import matplotlib.pyplot as plt
+        if existing_ax is None:
+            self.logger.info('axes not supplied, creating one')
+            fig,ax = plt.subplots(1,1,figsize=(10,5))
+        else:
+            fig = None
+            ax = existing_ax
+        figout = {}
+        figout['fig'] = fig
+        figout['ax'] = ax
+        profile_color = {}
+        profile_color['delta'] = 'red'
+        profile_color['sigma'] = 'blue'
+        leg_dict = {'msis_line':'Prior (MSIS)',
+                    'delta_line':r'O$_2$ $\Delta$',
+                    'sigma_line':r'O$_2$ $\Sigma$',
+                    'ace_line':'ACE-FTS',
+                    'sofie_line':'SOFIE'}
+        figout[which_sensor.lower()+'_line'] =ax.plot(self[which_sensor.lower()+'_T'],self[which_sensor.lower()+'_H'],'-k')
+        if 'T_msis' in self.keys():
+            figout['msis_line'] = ax.plot(self['T_msis'],self['Hlayer'],linewidth=2,color='gray',alpha=0.5)
+        ref_dofs = 1
+        ref_size = 50
+        if sigma_or_delta is None:
+            figout['delta_line'] = ax.plot(self['delta_T'],self['Hlayer'],'-',
+                    color=profile_color['delta'],linewidth=1)
+            figout['sigma_line'] = ax.plot(self['sigma_T'],self['Hlayer'],'-',
+                    color=profile_color['sigma'],linewidth=1)
+            figout['delta_scatter'] = ax.scatter(self['delta_T'],self['Hlayer'],
+                       s=self['delta_T_dofs']/ref_dofs*ref_size,color=profile_color['delta'])
+            figout['sigma_scatter'] = ax.scatter(self['sigma_T'],self['Hlayer'],
+                       s=self['sigma_T_dofs']/ref_dofs*ref_size,color=profile_color['sigma'])
+            # ax.legend([which_sensor.upper(),r'O$_2$ $\Delta$',r'O$_2$ $\Sigma$'])
+        handle_list = []
+        lname_list = []
+        for (k,v) in figout.items():
+            if k in leg_dict.keys():
+                handle_list.append(v[0])
+                lname_list.append(leg_dict[k])
+        ax.legend(handle_list,lname_list)
+        ax.set_xlabel('Temperature [K]');
+        ax.set_ylabel('Altitude [km]');
+        ax.set_title('SCIAMACHY (lat: {:.2f}, lon: {:.2f}), {} (lat: {:.2f}, lon: {:.2f})'.format(
+            self.scia_lat,self.scia_lon,which_sensor.upper(),
+            getattr(self,which_sensor.lower()+'_lat'),getattr(self,which_sensor.lower()+'_lon')));
+        if size_legend:
+            from matplotlib.lines import Line2D
+            insert_ax = fig.add_axes([0.5,0.5,0.3,0.1])
+            xxx = np.array([0.1,0.25,0.5,0.75,1])
+            insert_ax.scatter(xxx,np.zeros(xxx.shape),s=xxx/ref_dofs*ref_size,color='gray')
+            insert_ax.set_xticks(xxx)
+            insert_ax.set_xlabel('DOFS')
+            insert_ax.set_ylim((-0.15,0.15));
+            insert_ax.set_xlim((np.min(xxx)-.1,np.max(xxx)+.1));
+            insert_ax.set_frame_on(False)
+            insert_ax.axes.get_yaxis().set_visible(False)
+            xmin,xmax = insert_ax.get_xaxis().get_view_interval()
+            ymin,ymax = insert_ax.get_yaxis().get_view_interval()
+            insert_ax.add_artist(Line2D((xmin,xmax),(ymin,ymin),color='k',linewidth=2))
+            figout['insert_ax'] = insert_ax
+        return figout
+    
+class Collocated_Profiles(list):
+    def __init__(self,input_list=[]):
+        self.logger = logging.getLogger(__name__)
+        for cp in input_list:
+            self.append(cp)
+        self.npair = len(input_list)
+    def append_Collocated_Profile(self,cp):
+        self.append(cp)
+        self.npair += 1
+    def bin_bias_profiles(self,which_sensor='ace',
+                          sigma_or_delta='delta',
+                          vertical_edges=None,func=np.nanmean):
+        from scipy.stats import binned_statistic
+        import warnings
+        Hlayer_all = np.array([cp['Hlayer'] for cp in self]).ravel()
+        bias_all = np.array([cp[sigma_or_delta.lower()+'_minus_{}_T'.format(which_sensor.lower())] for cp in self]).ravel()
+        if vertical_edges is None:
+            vertical_edges = np.linspace(Hlayer_all.min(),Hlayer_all.max(),51)
+        vertical_mid = vertical_edges[0:-1]+np.diff(vertical_edges)/2
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", category=RuntimeWarning)
+            profile,_,_ = binned_statistic(Hlayer_all, bias_all, statistic=func,bins=vertical_edges)
+        outp = {'H':vertical_mid,'dT':profile}
+        return outp
 
 class layer():
     
