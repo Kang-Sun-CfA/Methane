@@ -388,6 +388,104 @@ def F_scia_ace_collocation(ace_path,
     else:
         df.to_csv(save_csv_path)  
 
+def F_ncread_selective(fn,varnames,varnames_short=None):
+    """
+    very basic netcdf reader, similar to F_ncread_selective.m
+    created on 2019/08/13
+    """
+    from netCDF4 import Dataset
+    ncid = Dataset(fn,'r')
+    outp = {}
+    if varnames_short is None:
+        varnames_short = varnames
+    for (i,varname) in enumerate(varnames):
+        try:
+            outp[varnames_short[i]] = ncid[varname][:].filled(np.nan)
+        except:
+            logging.debug('{} cannot be filled by nan or is not a masked array'.format(varname))
+            outp[varnames_short[i]] = ncid[varname][:]
+    ncid.close()
+    return outp
+
+def F_scia_mipas_collocation(mipas_path_pattern,
+                             scia_path_pattern,
+                             save_csv_path=None,
+                             time_hr=1,space_km=500,
+                             start_year=None,start_month=None,start_day=None,
+                             end_year=None,end_month=None,end_day=None,
+                             if_exclude_MLT=False):
+    collocation_info = []
+    datetime_2000 = dt.datetime(2000,1,1)
+    datenum_2000 = datetime2datenum(datetime_2000)
+    if start_year is not None:
+        start_date = dt.date(start_year,start_month,start_day)
+        end_date = dt.date(end_year,end_month,end_day)
+    else:
+        start_date = dt.date(2002,3,1)
+        end_date = dt.date(2012,4,8)
+    days = (end_date-start_date).days+1
+    DATES = [start_date + dt.timedelta(days=d) for d in range(days)]
+    for DATE in DATES:
+        scia_flist = glob.glob(DATE.strftime(scia_path_pattern))
+        mipas_flist = np.array(glob.glob(DATE.strftime(mipas_path_pattern)))
+        for scia_path in scia_flist:
+            s = sciaOrbit(scia_path)
+            if if_exclude_MLT:
+                if s.ifMLT():
+                    logging.info('this orbit appears to be MLT and will be skipped')
+                    continue
+            scia_orbit_number = os.path.split(scia_path)[-1][-8:-3]
+            mask = np.array([os.path.split(mipas_path)[-1][-11:-6]==scia_orbit_number for mipas_path in mipas_flist])
+            if np.sum(mask) == 0:
+                continue
+            mipas_path = mipas_flist[mask][0]
+            logging.info(f'loading scia file {os.path.split(scia_path)[-1]}')
+            logging.info(f'loading mipas file {os.path.split(mipas_path)[-1]}')
+            mipas = F_ncread_selective(mipas_path,['time','latitude','longitude','height','profile','profile_error','day_night','quality_flag'])
+            mipas['pixel'] = np.arange(len(mipas['time']))
+            mask = (mipas['quality_flag'] == 0) & (mipas['day_night'] == 1)
+            mipas = {k:v[mask,] for (k,v) in mipas.items()}
+            mipas['matlab_datenum'] = mipas['time']/86400+datenum_2000
+            s.loadData()
+            granules = s.divideProfiles()
+            orbitLat = np.array([g['latitude'][0,] for g in granules])
+            orbitLon = np.array([g['longitude'][0,] for g in granules])
+            orbitDatenum = np.array([g['time'][0,]/86400+datenum_2000 for g in granules])
+            orbitDatenum=np.repeat(orbitDatenum[...,np.newaxis],orbitLat.shape[1],axis=1)
+            for imipas in range(len(mipas['time'])):
+                mipas_lon = mipas['longitude'][imipas]
+                mipas_lat = mipas['latitude'][imipas]
+                mipas_datenum = mipas['matlab_datenum'][imipas]
+                dists = np.array([[F_distance(slat,slon,mipas_lat,mipas_lon) for (slat,slon) in zip(lineLat,lineLon)]
+                                  for (lineLat,lineLon) in zip(orbitLat,orbitLon)])
+                spacemask = dists <= space_km
+                timemask = np.abs(mipas_datenum-orbitDatenum) < time_hr/24
+                spacetimemask = spacemask&timemask
+                if np.sum(spacetimemask ) == 0:
+                    continue
+                dists[~spacetimemask] = np.nan
+                logging.info('min dist = {}'.format(np.nanmin(dists)))
+                scia_collocation = np.where(dists==np.nanmin(dists))
+                scia_iy = scia_collocation[0][0]
+                scia_ix = scia_collocation[1][0]
+                collocation_info.append({'scia path':scia_path,
+                                         'scia iy':scia_iy,
+                                         'scia ix':scia_ix,
+                                         'scia lat':orbitLat[scia_iy,scia_ix],
+                                         'scia lon':orbitLon[scia_iy,scia_ix],
+                                         'scia datenum':orbitDatenum[scia_iy,scia_ix],
+                                         'mipas path':mipas_path,
+                                         'mipas pixel':mipas['pixel'][imipas],
+                                         'mipas lat':mipas_lat,
+                                         'mipas lon':mipas_lon,
+                                         'mipas datenum':mipas_datenum,
+                                         'distance (km)':dists[scia_iy,scia_ix]})
+    df = pd.DataFrame.from_dict(collocation_info)
+    if save_csv_path is None:
+        return df
+    else:
+        df.to_csv(save_csv_path)                 
+
 class Collocated_Profile(dict):
     def __init__(self,df_row):
         self.logger = logging.getLogger(__name__)
