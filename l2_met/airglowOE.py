@@ -221,8 +221,13 @@ def F_scia_sofie_collocation(sofie_dir,
         for scia_fn in scia_flist:
             logging.info('loading {}'.format(scia_fn))
             s = sciaOrbit(scia_fn)
+            try:
+                ifMLT = s.ifMLT()
+            except:
+                logging.warning(f'{scia_fn} gives error!')
+                continue
             if if_exclude_MLT:
-                if s.ifMLT():
+                if ifMLT:
                     logging.info('this orbit appears to be MLT and will be skipped')
                     continue
             s.loadData()
@@ -339,8 +344,13 @@ def F_scia_ace_collocation(ace_path,
     for scia_fn in scia_flist:
         logging.info('loading {}'.format(scia_fn))
         s = sciaOrbit(scia_fn)
+        try:
+            ifMLT = s.ifMLT()
+        except:
+            logging.warning(f'{scia_fn} gives error!')
+            continue
         if if_exclude_MLT:
-            if s.ifMLT():
+            if ifMLT:
                 logging.info('this orbit appears to be MLT and will be skipped')
                 continue
         s.loadData()
@@ -430,8 +440,13 @@ def F_scia_mipas_collocation(mipas_path_pattern,
         mipas_flist = np.array(glob.glob(DATE.strftime(mipas_path_pattern)))
         for scia_path in scia_flist:
             s = sciaOrbit(scia_path)
+            try:
+                ifMLT = s.ifMLT()
+            except:
+                logging.warning(f'{scia_path} gives error!')
+                continue
             if if_exclude_MLT:
-                if s.ifMLT():
+                if ifMLT:
                     logging.info('this orbit appears to be MLT and will be skipped')
                     continue
             scia_orbit_number = os.path.split(scia_path)[-1][-8:-3]
