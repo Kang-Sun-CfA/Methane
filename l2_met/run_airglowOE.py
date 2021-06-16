@@ -11,68 +11,6 @@ https://github.com/Kang-Sun-CfA/Methane/blob/master/l2_met/airglowOE.py
 """
 
 import sys, os, yaml
-if sys.platform == 'win32':# windows for testing
-    control = {}
-    control['hapi directory'] = r'C:\research\CH4\airglowOE'
-    control['airglowOE directory'] = r'C:\research\CH4\airglowOE'
-    control['save directory'] = r'C:\research\CH4\airglowOE'
-    control['file suffix'] = '_airglow_level2'
-    control['if save single-pixel file'] = True
-    control['hitran database path'] = r'C:\research\CH4\hapi_database'
-    control['sciamachy file path'] = r'C:\research\CH4\airglow\SCI_20100203T195626_00329_41465.nc'
-#    control['sciamachy file path'] = r'C:\research\CH4\airglow\SCI_20100924T211353_00158_44801.nc'
-    control['if verbose'] = True
-    # use msis model pressure and O2 number density or not
-    control['if use msis'] = False
-    # start/end wavelengths in nm
-    control['delta start wavelength'] = 1240.
-    control['delta end wavelength'] = 1300.
-    # min/max tangent heights in km
-    control['delta min tangent height'] = 35.
-    control['delta max tangent height'] = 100.
-    # min/max tangent heights in km for mesosphere-lower thermosphere orbits
-    control['delta min tangent height mlt'] = 60.
-    control['delta max tangent height mlt'] = 120.
-    # forward mode wavelength step, has to be negative
-    control['delta w1 step'] = -0.001
-    # detector response, used to estimate shot noise
-    control['delta radiance per electron'] = 2e8
-    control['delta number of loosen O2 layers'] = 6
-    control['delta number of loosen O2 layers mlt'] = 0
-    
-    control['delta start along-track (0-based)'] = 5
-    control['delta end along-track (0-based)'] = 5
-    
-    control['delta start across-track (0-based)'] = 5
-    control['delta end across-track (0-based)'] = 5
-    
-    control['if A band'] = True
-    
-    # start/end wavelengths in nm
-    control['sigma start wavelength'] = 759.
-    control['sigma end wavelength'] = 772.
-    # min/max tangent heights in km
-    control['sigma min tangent height'] = 60.
-    control['sigma max tangent height'] = 100.
-    # min/max tangent heights in km for mesosphere-lower thermosphere orbits
-    control['sigma min tangent height mlt'] = 60.
-    control['sigma max tangent height mlt'] = 120.
-    # forward mode wavelength step, has to be negative
-    control['sigma w1 step'] = -0.0002
-    # detector response, used to estimate shot noise
-    control['sigma radiance per electron'] = 1e7
-    control['sigma number of loosen O2 layers'] = 6
-    control['sigma number of loosen O2 layers mlt'] = 6
-    
-    control['sigma start along-track (0-based)'] = 5
-    control['sigma end along-track (0-based)'] = 5
-    
-    control['sigma start across-track (0-based)'] = 5
-    control['sigma end across-track (0-based)'] = 5
-    
-    with open(os.path.join(control['airglowOE directory'],'airglowOE_control.txt'), 'w') as stream:
-        yaml.dump(control, stream,sort_keys=False)
-
 import numpy as np
 if sys.platform == 'win32':# windows for testing
     with open(r'C:\research\CH4\airglowOE\airglowOE_control.txt','r') as stream:
@@ -99,9 +37,14 @@ if 'if save single-pixel file' not in control.keys():
     control['if save single-pixel file'] = False
 # open a sciamachy orbit level 1b file
 s = sciaOrbit(sciaPath=control['sciamachy file path'])
-# decide if the orbit is mesosphere-lower thermosphere (mlt) limb scan (50-150 km) or normal limb scan (0-100 km)
+# decide if the orbit is mesosphere-lower thermosphere (mlt) limb scan (50-150 km) 
+# or normal mesosphere-upper stratosphere (mus) limb scan (0-100 km)
 # the tangent height order appears to be reversed in mlt scans
-if_mlt_or_not = s.ifMLT()
+try:
+    if_mlt_or_not = s.ifMLT()
+except:
+    logging.warning(control['sciamachy file path']+' gives error!')
+    sys.exit()
 #%%
 def F_save_single_pixel(fn,iy,ix,ny,nx=8,nth=15,**kwargs):
     '''
@@ -233,6 +176,8 @@ D_latitude = np.full((D_ngranule,D_nft,D_nth),np.nan,dtype=np.float32)
 D_longitude = np.full((D_ngranule,D_nft,D_nth),np.nan,dtype=np.float32)
 
 for (igranule,granule) in enumerate(D_granules):
+    if granule['tangent_height'].shape[0] != D_nth:
+        continue
     for ift in range(D_nft):
         th_idx = np.argsort(granule['tangent_height'][:,ift])# TH has to go from low to high
         D_latitude[igranule,ift,] = granule['latitude'][th_idx,ift]
@@ -397,6 +342,8 @@ else:
     S_longitude = np.full((S_ngranule,S_nft,S_nth),np.nan,dtype=np.float32)
     
     for (igranule,granule) in enumerate(S_granules):
+        if granule['tangent_height'].shape[0] != S_nth:
+            continue
         for ift in range(D_nft):
             th_idx = np.argsort(granule['tangent_height'][:,ift])# TH has to go from low to high
             S_latitude[igranule,ift,] = granule['latitude'][th_idx,ift]
