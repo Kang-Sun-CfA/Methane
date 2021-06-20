@@ -527,14 +527,15 @@ class Collocated_Profile(dict):
             '_{}_{}_'.format(self.scia_iy,self.scia_ix)+sigma_or_delta+'.mat'
         fn = os.path.join(scia_single_pixel_dir,scia_fn)
         scia = loadmat(fn,squeeze_me=True)
-        self['th']=scia['tangent_height']
+        th_nan_mask = (scia['tangent_height'] < 130)#~np.isnan(scia['tangent_height'])
+        self['th']=scia['tangent_height'][th_nan_mask]
         self['Hlayer'] = F_th_to_Hlayer(self['th'])
         self['Hlevel'] = F_th_to_Hlevel(self['th'])
-        self[sigma_or_delta+'_T']=scia['temperature']
-        self[sigma_or_delta+'_T_dofs']=scia['temperature_dofs']
-        self['msis_T']=scia['temperature_msis']
-        self['lat'] = scia['latitude']
-        self['lon'] = scia['longitude']
+        self[sigma_or_delta+'_T']=scia['temperature'][th_nan_mask]
+        self[sigma_or_delta+'_T_dofs']=scia['temperature_dofs'][th_nan_mask]
+        self['msis_T']=scia['temperature_msis'][th_nan_mask]
+        self['lat'] = scia['latitude'][th_nan_mask]
+        self['lon'] = scia['longitude'][th_nan_mask]
         self[sigma_or_delta+'_chi2'] = scia['chi2']
         self[sigma_or_delta+'_rmse'] = scia['rmse']
     def read_ace(self,ace_dict=None,fn=None):
@@ -663,8 +664,12 @@ class Collocated_Profiles(list):
                           vertical_edges=None,func=np.nanmean):
         from scipy.stats import binned_statistic
         import warnings
+        '''' the following doesn't work if Hlayer has not the same length
         Hlayer_all = np.array([cp['Hlayer'] for cp in self]).ravel()
         bias_all = np.array([cp[sigma_or_delta.lower()+'_minus_{}_T'.format(which_sensor.lower())] for cp in self]).ravel()
+        '''
+        Hlayer_all = np.hstack([cp['Hlayer'] for cp in self])
+        bias_all = np.hstack([cp[sigma_or_delta.lower()+'_minus_{}_T'.format(which_sensor.lower())] for cp in self])
         if vertical_edges is None:
             vertical_edges = np.linspace(Hlayer_all.min(),Hlayer_all.max(),51)
         vertical_mid = vertical_edges[0:-1]+np.diff(vertical_edges)/2
