@@ -621,6 +621,11 @@ class Collocated_Profile(dict):
             figout['sigma_scatter'] = ax.scatter(self['sigma_T'],self['Hlayer'],
                        s=self['sigma_T_dofs']/ref_dofs*ref_size,color=profile_color['sigma'])
             # ax.legend([which_sensor.upper(),r'O$_2$ $\Delta$',r'O$_2$ $\Sigma$'])
+        else:
+            figout[sigma_or_delta+'_line'] = ax.plot(self[sigma_or_delta+'_T'],self['Hlayer'],'-',
+                    color=profile_color[sigma_or_delta],linewidth=1)
+            figout[sigma_or_delta+'_scatter'] = ax.scatter(self[sigma_or_delta+'_T'],self['Hlayer'],
+                       s=self[sigma_or_delta+'_T_dofs']/ref_dofs*ref_size,color=profile_color[sigma_or_delta])
         handle_list = []
         lname_list = []
         for (k,v) in figout.items():
