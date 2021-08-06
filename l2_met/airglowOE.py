@@ -18,6 +18,7 @@ import warnings
 import inspect
 from collections import OrderedDict
 from calendar import monthrange
+from scipy.stats import binned_statistic
 
 # In this "robust" version of arange the grid doesn't suffer 
 # from the shift of the nodes due to error accumulation.
@@ -515,12 +516,24 @@ class Collocated_Profile(dict):
             self.ace_lon = df_row['ace lon']
             self.ace_datenum = df_row['ace datenum']
             self.ace_index = df_row['ace index']
+            self.logger.info('this appears to be collocation between scia and ace')
+            self.which_sensor = 'ace'
         if 'sofie lat' in df_row.keys():
             self.sofie_lat = df_row['sofie lat']
             self.sofie_lon = df_row['sofie lon']
             self.sofie_datenum = df_row['sofie datenum']
             self.sofie_pixel = df_row['sofie pixel']
             self.sofie_path = df_row['sofie path']
+            self.logger.info('this appears to be collocation between scia and sofie')
+            self.which_sensor = 'sofie'
+        if 'mipas lat' in df_row.keys():
+            self.mipas_lat = df_row['mipas lat']
+            self.mipas_lon = df_row['mipas lon']
+            self.mipas_datenum = df_row['mipas datenum']
+            self.mipas_pixel = df_row['mipas pixel']
+            self.mipas_path = df_row['mipas path']
+            self.logger.info('this appears to be collocation between scia and mipas')
+            self.which_sensor = 'mipas'
     def read_scia_mat(self,scia_single_pixel_dir,sigma_or_delta='delta'):
         from scipy.io import loadmat
         scia_fn = os.path.splitext(os.path.split(self.scia_l1b_path)[-1])[0]+\
@@ -555,9 +568,17 @@ class Collocated_Profile(dict):
         sofie = F_read_sofie(sofie_path,varnames=['Temperature','Altitude'])
         self['sofie_H'] = sofie['Altitude']
         self['sofie_T'] = sofie['Temperature'][self.sofie_pixel,]
+    def read_mipas(self,mipas_dir=None):
+        if mipas_dir is None:
+            mipas_path=self.mipas_path
+        else:
+            mipas_path_split=os.path.split(self.mipas_path)
+            mipas_path=os.path.join(mipas_dir,mipas_path_split[-1])
+        mipas = F_ncread_selective(mipas_path,['height','profile'])
+        self['mipas_H']=mipas['height'][self.mipas_pixel,:]
+        self['mipas_T']=mipas['profile'][self.mipas_pixel,:]
     def compare(self,min_dofs=0.5):
-        from scipy.stats import binned_statistic
-        import warnings
+        
         if 'ace_H' in self.keys():
             self.logger.info('matching ace with scia')
             with warnings.catch_warnings():
@@ -584,17 +605,31 @@ class Collocated_Profile(dict):
                 self['sigma_minus_sofie_T'][self['sigma_T_dofs']<min_dofs] = np.nan
             if 'msis_T' in self.keys():
                 self['msis_minus_sofie_T'] = self['msis_T']-self['sofie_binned_T']
+        if 'mipas_H' in self.keys():
+            self.logger.info('matching mipas with scia')
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", category=RuntimeWarning)
+                self['mipas_binned_T'],_,_ = binned_statistic(self['mipas_H'],self['mipas_T'],statistic=np.nanmean,bins=self['Hlevel'])
+            if 'delta_T' in self.keys():
+                self['delta_minus_mipas_T'] = self['delta_T']-self['mipas_binned_T']
+                self['delta_minus_mipas_T'][self['delta_T_dofs']<min_dofs] = np.nan
+            if 'sigma_T' in self.keys():
+                self['sigma_minus_mipas_T'] = self['sigma_T']-self['mipas_binned_T']
+                self['sigma_minus_mipas_T'][self['sigma_T_dofs']<min_dofs] = np.nan
+            if 'msis_T' in self.keys():
+                self['msis_minus_mipas_T'] = self['msis_T']-self['mipas_binned_T']
     def plot_raw_profiles(self,existing_ax=None,
-                          which_sensor='ace',
-                          sigma_or_delta=None,
+                          which_sensor=None,
+                          sigma_or_delta='delta',
                           size_legend=True):
-        import matplotlib.pyplot as plt
         if existing_ax is None:
             self.logger.info('axes not supplied, creating one')
             fig,ax = plt.subplots(1,1,figsize=(10,5))
         else:
             fig = None
             ax = existing_ax
+        if which_sensor is None:
+            which_sensor = self.which_sensor
         figout = {}
         figout['fig'] = fig
         figout['ax'] = ax
@@ -640,7 +675,7 @@ class Collocated_Profile(dict):
             getattr(self,which_sensor.lower()+'_lat'),getattr(self,which_sensor.lower()+'_lon')));
         if size_legend:
             from matplotlib.lines import Line2D
-            insert_ax = fig.add_axes([0.5,0.5,0.3,0.1])
+            insert_ax = fig.add_axes([0.15,0.15,0.2,0.1])
             xxx = np.array([0.1,0.25,0.5,0.75,1])
             insert_ax.scatter(xxx,np.zeros(xxx.shape),s=xxx/ref_dofs*ref_size,color='gray')
             insert_ax.set_xticks(xxx)
@@ -658,21 +693,24 @@ class Collocated_Profile(dict):
 class Collocated_Profiles(list):
     def __init__(self,input_list=[]):
         self.logger = logging.getLogger(__name__)
+        self.npair = 0
         for cp in input_list:
-            self.append(cp)
-        self.npair = len(input_list)
+            self.append_Collocated_Profile(cp)
     def append_Collocated_Profile(self,cp):
         self.append(cp)
+        if not hasattr(self,'which_sensor'):
+            self.which_sensor = cp.which_sensor
+        elif self.which_sensor != cp.which_sensor:
+            self.logger.error('this should not happen. cps and cp conflict in which_sensor')
         self.npair += 1
-    def bin_bias_profiles(self,which_sensor='ace',
+    def bin_bias_profiles(self,which_sensor=None,
                           sigma_or_delta='delta',
                           vertical_edges=None,func=np.nanmean):
-        from scipy.stats import binned_statistic
-        import warnings
         '''' the following doesn't work if Hlayer has not the same length
         Hlayer_all = np.array([cp['Hlayer'] for cp in self]).ravel()
         bias_all = np.array([cp[sigma_or_delta.lower()+'_minus_{}_T'.format(which_sensor.lower())] for cp in self]).ravel()
         '''
+        if which_sensor is None: which_sensor = self.which_sensor
         Hlayer_all = np.hstack([cp['Hlayer'] for cp in self])
         bias_all = np.hstack([cp[sigma_or_delta.lower()+'_minus_{}_T'.format(which_sensor.lower())] for cp in self])
         if vertical_edges is None:
