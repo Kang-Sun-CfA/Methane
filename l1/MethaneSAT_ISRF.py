@@ -679,6 +679,7 @@ class Multiple_ISRFs():
             ydata = self.central_wavelengths
             wavcal_poly[irow,:] = np.flip(np.polyfit(xdata[~np.isnan(xdata)],ydata[~np.isnan(xdata)],n_wavcal_poly)) 
         self.center_pix_smooth = center_pix_smooth
+        self.center_pix = center_pix
         self.wavcal_poly = wavcal_poly
         self.n_wavcal_poly = n_wavcal_poly
     def register_wavelength(self,use_central_wavelengths=None,n_wavcal_poly=None):
@@ -687,9 +688,9 @@ class Multiple_ISRFs():
         '''
         if n_wavcal_poly is None:
             if self.instrum.lower() == 'methanesat':
-                n_wavecal_poly =2
+                n_wavcal_poly =3
             elif self.instrum.lower() == 'methaneair':
-                n_wavecal_poly =1
+                n_wavcal_poly =1
                 
         if use_central_wavelengths is None:
             use_central_wavelengths = self.central_wavelengths
@@ -740,6 +741,24 @@ class Multiple_ISRFs():
         self.wavcal_poly = wavcal_poly
         self.n_wavcal_poly = n_wavcal_poly
     
+    def plot_center_pix(self):
+        ''' 
+        plot center pix location at center wavelengths for all rows
+        '''
+        fig,axs = plt.subplots(1,2,figsize=(9,3.5),constrained_layout=True)
+        figout = {}
+        figout['fig'] = fig
+        figout['axs'] = axs
+        ax = axs[0]
+        ax.plot(self.rows_1based,self.center_pix)
+        ax.legend(['{} nm'.format(c) for c in self.central_wavelengths])
+        ax.set_xlabel('Spatial pixels')
+        ax.set_ylabel('Spectral pixels')
+        ax = axs[1]
+        ax.plot(self.rows_1based,np.array([c-np.nanmedian(c) for c in self.center_pix.T]).T)
+        ax.set_xlabel('Spatial pixels')
+        ax.set_ylabel('Relative spectral pixels')
+        return figout
     def plot_dispersion(self,plot_rows=[500,700],ax=None):
         '''
         plot nm per pix at given rows
