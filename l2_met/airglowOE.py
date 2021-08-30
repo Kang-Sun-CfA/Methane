@@ -13,6 +13,7 @@ from netCDF4 import Dataset
 import matplotlib.pyplot as plt
 from astropy.convolution import convolve_fft
 from scipy.interpolate import splrep, splev
+from scipy.spatial import ConvexHull
 import logging
 import warnings
 import inspect
@@ -2323,6 +2324,117 @@ class Level2_Regridder(object):
         
         nc.close()
 
+# From https://stackoverflow.com/questions/13542855/algorithm-to-find-the-minimum-area-rectangle-for-given-points-in-order-to-comput
+def minimum_bounding_rectangle(points):
+    """
+    Find the smallest bounding rectangle for a set of points.
+    Returns a set of points representing the corners of the bounding box.
+​
+    :param points: an nx2 matrix of coordinates
+    :rval: an nx2 matrix of coordinates
+    """
+    from scipy.ndimage.interpolation import rotate
+    pi2 = np.pi/2.
+    
+    # get the convex hull for the points
+    hull_points = points[ConvexHull(points).vertices]
+    # calculate edge angles
+    edges = np.zeros((len(hull_points)-1, 2))
+    edges = hull_points[1:] - hull_points[:-1]
+    angles = np.zeros((len(edges)))
+    angles = np.arctan2(edges[:, 1], edges[:, 0])
+    angles = np.abs(np.mod(angles, pi2))
+    angles = np.unique(angles)
+    # find rotation matrices
+    # XXX both work
+    rotations = np.vstack([
+        np.cos(angles),
+        np.cos(angles-pi2),
+        np.cos(angles+pi2),
+        np.cos(angles)]).T
+#     rotations = np.vstack([
+#         np.cos(angles),
+#         -np.sin(angles),
+#         np.sin(angles),
+#         np.cos(angles)]).T
+    rotations = rotations.reshape((-1, 2, 2))
+    # apply rotations to the hull
+    rot_points = np.dot(rotations, hull_points.T)
+    # find the bounding points
+    min_x = np.nanmin(rot_points[:, 0], axis=1)
+    max_x = np.nanmax(rot_points[:, 0], axis=1)
+    min_y = np.nanmin(rot_points[:, 1], axis=1)
+    max_y = np.nanmax(rot_points[:, 1], axis=1)
+    # find the box with the best area
+    areas = (max_x - min_x) * (max_y - min_y)
+    best_idx = np.argmin(areas)
+    # return the best box
+    x1 = max_x[best_idx]
+    x2 = min_x[best_idx]
+    y1 = max_y[best_idx]
+    y2 = min_y[best_idx]
+    r = rotations[best_idx]
+    rval = np.zeros((4, 2))
+    rval[0] = np.dot([x1, y2], r)
+    rval[1] = np.dot([x2, y2], r)
+    rval[2] = np.dot([x2, y1], r)
+    rval[3] = np.dot([x1, y1], r)
+    return rval
+def get_angle(v1,v2):
+    dot = np.sum(v1*v2)
+    det = v1[0]*v2[1] - v1[1]*v2[0]
+    ang = np.rad2deg(np.arctan2(det,dot))
+    if(ang < 0.0):
+        ang += 360.0
+    return ang
+def aggregate_corners(clon,clat,xtrk_agg,atrk_agg,bl_clockwise_order=True,snap_to_corners=True):
+    # Dimensions
+    imx = clon.shape[0] ; jmx = clon.shape[1]
+    # Get the block aggregate 
+    ilm = np.concatenate([np.arange(0,imx,xtrk_agg),[imx]]) ; imx_a = len(ilm)-1
+    jlm = np.concatenate([np.arange(0,jmx,atrk_agg),[jmx]]) ; jmx_a = len(jlm)-1
+    # Output corners
+    clon_agg = np.zeros((imx_a,jmx_a,4))
+    clat_agg = np.zeros((imx_a,jmx_a,4))
+    # Loop over corners
+    for i in range(imx_a):
+        x0 = ilm[i] ; xf = ilm[i+1]-1
+        for j in range(jmx_a):
+            y0 = jlm[j] ; yf = jlm[j+1]-1
+            
+            # Use edges as inputs
+            pts = np.zeros((16,2))
+            pts[0:4,0]   = clon[x0,y0,:] ; pts[0:4,1]   = clat[x0,y0,:]
+            pts[4:8,0]   = clon[x0,yf,:] ; pts[4:8,1]   = clat[x0,yf,:]
+            pts[8:12,0]  = clon[xf,yf,:] ; pts[8:12,1]  = clat[xf,yf,:]
+            pts[12:16,0] = clon[xf,y0,:] ; pts[12:16,1] = clat[xf,y0,:]
+            
+            rval = minimum_bounding_rectangle(pts)
+            if(bl_clockwise_order):
+                ang = np.zeros(4)
+                for c in range(4):
+                    # Compute center coordinate
+                    lon = np.mean(pts[:,0])
+                    lat = np.mean(pts[:,1])
+                    # Compute angle from due south
+                    v1 = np.array([rval[c,0]-lon,rval[c,1]-lat])
+                    v2 = np.array([0,-1])
+                    ang[c] = get_angle(v1,v2)
+                # Sort angles clockwise
+                ids = np.argsort(ang)
+                rval = rval[ids,:]
+            if(snap_to_corners):
+                for c in range(4):
+                    cdst = np.sqrt( np.power(pts[:,0] - rval[c,0],2) + \
+                                    np.power(pts[:,1] - rval[c,1],2) )
+                    ic = np.argmin(cdst)
+                    rval[c,0] = pts[ic,0] ; rval[c,1] = pts[ic,1]
+            
+            # Store value
+            clon_agg[i,j,:] = rval[:,0]
+            clat_agg[i,j,:] = rval[:,1]
+            
+    return clon_agg,clat_agg
 def F_wrapper_parallel_ft(args):
     try:
         outp = F_parallel_ft(*args)
