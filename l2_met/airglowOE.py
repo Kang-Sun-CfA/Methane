@@ -1522,7 +1522,8 @@ class Forward_Model(object):
             params.add(par)
         return params
     
-    def retrieve(self,radiance,radiance_error,params=None,max_iter=100,**kwargs):
+    def retrieve(self,radiance,radiance_error,
+                 params=None,max_iter=100,use_LM=False,max_diverging_step=5,**kwargs):
         
         if params is None:
             params = self.make_params()
@@ -1536,8 +1537,12 @@ class Forward_Model(object):
         Sy = np.diag(radiance_error.ravel()**2)
         Sy_inv = np.diag(1/radiance_error.ravel()**2)
         count = 0
+        count_div = 0
         dsigma2 = np.inf
         result = Retrieval_Results()
+        result.if_success = True
+        if use_LM:
+            LM_gamma = 10.
         while(dsigma2 > nstates and count < max_iter):
             self.logger.info('Iteration {}'.format(count))
             if count != 0:
@@ -1546,10 +1551,40 @@ class Forward_Model(object):
             yhat = obs_R2.ravel()
             all_jacobians = [jacobians[name] for name in params_names]
             K = np.column_stack(all_jacobians)
-            dbeta = np.linalg.inv(Sa_inv+K.T@Sy_inv@K)@(K.T@Sy_inv@(yy-yhat)-Sa_inv@(beta-beta0))
+            if use_LM:
+                self.logger.info('gamma = {}'.format(LM_gamma))
+                dbeta = np.linalg.inv((1+LM_gamma)*Sa_inv+K.T@Sy_inv@K)@(K.T@Sy_inv@(yy-yhat)-Sa_inv@(beta-beta0))
+                beta_try = beta+dbeta
+                c_i = (yy-yhat).T@Sy_inv@(yy-yhat)+(beta-beta0).T@Sa_inv@(beta-beta0)
+                params.update_vectors(vector_name='value',vector=beta_try)
+                obs_R2_try,_ = self.evaluate(params,**kwargs)
+                yhat_try = obs_R2_try.ravel()
+                c_in1 = (yy-yhat_try).T@Sy_inv@(yy-yhat_try)+(beta_try-beta0).T@Sa_inv@(beta_try-beta0)
+                yhat_linear = yhat+K@dbeta
+                c_in1_FC = (yy-yhat_linear).T@Sy_inv@(yy-yhat_linear)+(beta_try-beta0).T@Sa_inv@(beta_try-beta0)
+                LM_R = (c_i-c_in1)/(c_i-c_in1_FC)
+                self.logger.info('R = {:.3f}'.format(LM_R))
+                if LM_R <=0.0001:
+                    LM_gamma = LM_gamma*10
+                    self.logger.warning('R = {:.3f} and is diverging. Abandon step and increase gamma by 10'.format(LM_R))
+                    count_div += 1
+                    self.logger.info('{} diverging steps'.format(count_div))
+                    if count_div >= max_diverging_step:
+                        self.logger.warning('too many diverging steps, abandon retrieval')
+                        result.if_success = False
+                        break
+                    continue
+                elif LM_R < 0.25:
+                    LM_gamma = LM_gamma*10
+                elif LM_R < 0.75:
+                    pass
+                else:
+                    LM_gamma = LM_gamma/2
+            else:
+                dbeta = np.linalg.inv(Sa_inv+K.T@Sy_inv@K)@(K.T@Sy_inv@(yy-yhat)-Sa_inv@(beta-beta0))
             dsigma2 = dbeta.T@(K.T@Sy_inv@(yy-yhat)+Sa_inv@(beta-beta0))
             self.logger.info('dsigma2: {}'.format(dsigma2))
-            self.logger.info(' '.join('{:2E}'.format(b) for b in beta))
+            self.logger.debug(' '.join('{:2E}'.format(b) for b in beta))
             beta = beta+dbeta
             if count == 0:
                 result.y0 = obs_R2.ravel()
@@ -1568,6 +1603,8 @@ class Forward_Model(object):
         result.beta = beta
         result.Jprior = (beta-beta0).T@Sa_inv@(beta-beta0)
         result.max_iter = max_iter
+        if result.niter == max_iter:
+            result.if_success = False
         result.chi2 = np.sum(np.power(yy-yhat,2))/np.trace(Sy)
         result.rmse = np.sqrt(np.mean(np.power(yy-yhat,2)))
         Shat = np.linalg.inv(K.T@Sy_inv@K+Sa_inv)
