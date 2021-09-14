@@ -44,14 +44,14 @@ def F_generate_control(if_save_txt,
                        if_use_msis=True,
                        delta_start_wavelength=1240.,
                        delta_end_wavelength=1300.,
-                       delta_min_th=35.,
+                       delta_min_th=25.,
                        delta_max_th=100.,
                        delta_min_th_mlt=60.,
                        delta_max_th_mlt=120.,
                        delta_w1_step=-0.001,
-                       delta_r_per_e=2e8,
-                       delta_nO2Scale=6,
-                       delta_nO2Scale_mlt=0,
+                       delta_r_per_e=5e8,
+                       delta_nO2Scale=99,
+                       delta_nO2Scale_mlt=99,
                        delta_iy0=0,delta_iy1=100,
                        delta_ix0=0,delta_ix1=100,
                        if_A_band=True,
@@ -1034,14 +1034,14 @@ class sciaOrbit():
             axs[ift].legend(['{:.1f}'.format(th) for th in np.nanmean(granule['tangent_height'],axis=1)[THFilter]])
 
 def F_airglow_forward_model(w1,wavelength,L,p_profile,
-                            nO2s_profile,T_profile,HW1E,w_shift,
-                            nu=[],einsteinA=None,nO2_profile=None):
+                            nO2s_profile,T_profile,HW1E,w_shift,T_profile_reference=None,
+                            nu=None,einsteinA=None,nO2_profile=None):
     '''
     forward model to simulate scia-observed limb spectra for a profile scan
     output jacobians
     '''
-    if len(nu) == 0:
-        nu = 1e7/w1
+    nu = nu or 1e7/w1
+    T_profile_reference = T_profile_reference or T_profile.copy()
     dw1 = np.abs(np.median(np.diff(w1)))
     ndx = np.ceil(HW1E*3/dw1);
     xx = np.arange(ndx*2)*dw1-ndx*dw1;
@@ -1063,7 +1063,7 @@ def F_airglow_forward_model(w1,wavelength,L,p_profile,
                   minWavelength=np.min(w1),maxWavelength=np.max(w1),einsteinA=einsteinA,nO2=nO2_profile[ith])
         l.getAbsorption(nu=nu)
         sigma_[ith,] = l.sigma*l.nO2# this is optical depth divided by length
-        dsigmadT_[ith,] = l.dsigmadT*l.nO2-l.sigma*l.p/1.38065e-23*0.2095*1e-6/l.T**2# this is d(optical depth divided by length)/dT
+        dsigmadT_[ith,] = l.dsigmadT*l.nO2#-l.sigma*l.p/1.38065e-23*0.2095*1e-6/l.T**2# this is d(optical depth divided by length)/dT
         l.getAirglowEmission(nO2s=nO2s_profile[ith])
         emission_[ith,] = l.emission
         dedT_[ith,] = l.dedT
@@ -1091,17 +1091,37 @@ def F_airglow_forward_model(w1,wavelength,L,p_profile,
         absorbing_layer_idx = np.hstack((np.arange(nth-1,i-1,-1),np.arange(i,nth-1)))
         emitting_layer_idx = np.hstack((np.arange(nth-1,i-1,-1),np.arange(i,nth)))
         cum_tau = np.cumsum(np.array([sigma_[k,]*L[i,k] for k in absorbing_layer_idx]),axis=0)
+        emitting_layer_tau = np.array([-np.log((1-np.exp(-sigma_[k,]*L[i,k]))/(sigma_[k,]*L[i,k])) 
+                                       for k in emitting_layer_idx])
+        # d(emitting layer tau)/dT = d(emitting layer tau)/d(extinction) * d(extinction)/dT
+        detau_dT = np.array([(-(sigma_[k,]*L[i,k]*np.exp(-sigma_[k,]*L[i,k])+np.exp(-sigma_[k,]*L[i,k])-1)\
+                              /(sigma_[k,]*(1-np.exp(-sigma_[k,]*L[i,k]))))\
+                            *dsigmadT_[k,] for k in emitting_layer_idx])
+        
         for (count,j) in enumerate(emitting_layer_idx):
             if count == 0:
-                obs_R1[i,] = obs_R1[i,]+emission_[j,]/(4*np.pi)*L[i,j]# no absorption for the closest shell
-                obs_dR1dT[i,:,j] = obs_dR1dT[i,:,j]+dedT_[j,]/(4*np.pi)*L[i,j]
-                obs_dR1dnO2s[i,:,j] = obs_dR1dnO2s[i,:,j]+dednO2s_[j,]/(4*np.pi)*L[i,j]
+                total_tau = emitting_layer_tau[count,]
             else:
-                obs_R1[i,] = obs_R1[i,]+emission_[j,]/(4*np.pi)*L[i,j]*np.exp(-cum_tau[count-1,])
-                obs_dR1dT[i,:,j] = obs_dR1dT[i,:,j]+dedT_[j,]/(4*np.pi)*L[i,j]*np.exp(-cum_tau[count-1,])
-                for (count1,k) in enumerate(emitting_layer_idx[count+1:]):
-                    obs_dR1dT[i,:,j] = obs_dR1dT[i,:,j]+emission_[k,]/(4*np.pi)*L[i,k]*np.exp(-cum_tau[count+count1,])*(-L[i,j]*dsigmadT_[j,])
-                obs_dR1dnO2s[i,:,j] = obs_dR1dnO2s[i,:,j]+dednO2s_[j,]/(4*np.pi)*L[i,j]*np.exp(-cum_tau[count-1,])
+                # downstream layers' tau+emitting layer tau
+                total_tau = cum_tau[count-1,]+emitting_layer_tau[count,]
+            
+            # radiance
+            obs_R1[i,] = obs_R1[i,]+emission_[j,]/(4*np.pi)*L[i,j]*np.exp(-total_tau)
+            
+            # d(radiance)/d(emitting layer nO2s)
+            obs_dR1dnO2s[i,:,j] = obs_dR1dnO2s[i,:,j]+dednO2s_[j,]/(4*np.pi)*L[i,j]*np.exp(-total_tau)
+            
+            # d(radiance)/d(emitting layer temperature), without accounting for upstream layers
+            obs_dR1dT[i,:,j] = obs_dR1dT[i,:,j]+dedT_[j,]/(4*np.pi)*L[i,j]*np.exp(-total_tau)\
+            +emission_[j,]/(4*np.pi)*L[i,j]*np.exp(-total_tau)*(-detau_dT[count,])
+            
+            # loop over upstream layers
+            for (count1,k) in enumerate(emitting_layer_idx[count+1:]):
+                total_tau = cum_tau[count+count1,]+emitting_layer_tau[count+count1+1,]
+                # d(radiance)/d(emitting layer temperature) due to altered emission from upstream layers
+                obs_dR1dT[i,:,j] = obs_dR1dT[i,:,j]\
+                +emission_[k,]/(4*np.pi)*L[i,k]*np.exp(-total_tau)*(-L[i,j]*dsigmadT_[j,])
+        
         R1_oversampled_fft = convolve_fft(obs_R1[i,::-1],ILS,normalize_kernel=True)
         
         dR1dHW1E_oversampled_fft = convolve_fft(obs_R1[i,::-1],dILSdHW1E,normalize_kernel=False)
@@ -1128,16 +1148,14 @@ def F_airglow_forward_model(w1,wavelength,L,p_profile,
 
 def F_airglow_forward_model_nO2Scale(w1,wavelength,L,p_profile,
                                nO2s_profile,T_profile,HW1E,w_shift,
-                               nO2Scale_profile,T_profile_reference=[],
-                               nu=[],einsteinA=None,nO2_profile=None):
+                               nO2Scale_profile,T_profile_reference=None,
+                               nu=None,einsteinA=None,nO2_profile=None):
     '''
     forward model to simulate scia-observed limb spectra for a profile scan
     output jacobians
     '''
-    if len(nu) == 0:
-        nu = 1e7/w1
-    if len(T_profile_reference) == 0:
-        T_profile_reference = T_profile.copy()
+    nu = nu or 1e7/w1
+    T_profile_reference = T_profile_reference or T_profile.copy()
     dw1 = np.abs(np.median(np.diff(w1)))
     ndx = np.ceil(HW1E*3/dw1);
     xx = np.arange(ndx*2)*dw1-ndx*dw1;
@@ -1167,12 +1185,18 @@ def F_airglow_forward_model_nO2Scale(w1,wavelength,L,p_profile,
                   nO2=nO2_profile_full[ith]*nO2Scale_profile_full[ith],
                   einsteinA=einsteinA)
         l.getAbsorption(nu=nu)
-        sigma_[ith,] = l.sigma*l.nO2# this is optical depth divided by length
-        dsigmadnO2_[ith,] = l.sigma# this is d(optical depth divided by length)/dnO2
-        dsigmadT_[ith,] = l.dsigmadT*l.nO2#-l.sigma*l.p/1.38065e-23*0.2095*1e-6/l.T**2# this is d(optical depth divided by length)/dT
+        # this is extinction (o2 number density x o2 absorption cross section)
+        sigma_[ith,] = l.sigma*l.nO2
+        # this is d(extinction)/dnO2 for non-emitting layers
+        dsigmadnO2_[ith,] = l.sigma
+        # this is d(extinction)/dT
+        dsigmadT_[ith,] = l.dsigmadT*l.nO2
         l.getAirglowEmission(nO2s=nO2s_profile[ith])
+        # emissivity
         emission_[ith,] = l.emission
+        # d(emissivity)/dT
         dedT_[ith,] = l.dedT
+        # d(emissivity)/dnO2s
         dednO2s_[ith,] = l.dednO2s
     
     # high res attenuated emission at each tangent height
@@ -1201,18 +1225,48 @@ def F_airglow_forward_model_nO2Scale(w1,wavelength,L,p_profile,
         absorbing_layer_idx = np.hstack((np.arange(nth-1,i-1,-1),np.arange(i,nth-1)))
         emitting_layer_idx = np.hstack((np.arange(nth-1,i-1,-1),np.arange(i,nth)))
         cum_tau = np.cumsum(np.array([sigma_[k,]*L[i,k] for k in absorbing_layer_idx]),axis=0)
+        emitting_layer_tau = np.array([-np.log((1-np.exp(-sigma_[k,]*L[i,k]))/(sigma_[k,]*L[i,k])) 
+                                       for k in emitting_layer_idx])
+        # d(emitting layer tau)/dT = d(emitting layer tau)/d(extinction) * d(extinction)/dT
+        detau_dT = np.array([(-(sigma_[k,]*L[i,k]*np.exp(-sigma_[k,]*L[i,k])+np.exp(-sigma_[k,]*L[i,k])-1)\
+                              /(sigma_[k,]*(1-np.exp(-sigma_[k,]*L[i,k]))))\
+                            *dsigmadT_[k,] for k in emitting_layer_idx])
+        # d(emitting layer tau)/dnO2
+        detau_dnO2 = np.array([(-(sigma_[k,]*L[i,k]*np.exp(-sigma_[k,]*L[i,k])+np.exp(-sigma_[k,]*L[i,k])-1)\
+                              /(nO2_profile_full[k]*nO2Scale_profile_full[k]*(1-np.exp(-sigma_[k,]*L[i,k]))))\
+                               for k in emitting_layer_idx])
+        
         for (count,j) in enumerate(emitting_layer_idx):
             if count == 0:
-                obs_R1[i,] = obs_R1[i,]+emission_[j,]/(4*np.pi)*L[i,j]# no absorption for the closest shell
-                obs_dR1dT[i,:,j] = obs_dR1dT[i,:,j]+dedT_[j,]/(4*np.pi)*L[i,j]
-                obs_dR1dnO2s[i,:,j] = obs_dR1dnO2s[i,:,j]+dednO2s_[j,]/(4*np.pi)*L[i,j]
+                total_tau = emitting_layer_tau[count,]
             else:
-                obs_R1[i,] = obs_R1[i,]+emission_[j,]/(4*np.pi)*L[i,j]*np.exp(-cum_tau[count-1,])
-                obs_dR1dT[i,:,j] = obs_dR1dT[i,:,j]+dedT_[j,]/(4*np.pi)*L[i,j]*np.exp(-cum_tau[count-1,])
-                for (count1,k) in enumerate(emitting_layer_idx[count+1:]):
-                    obs_dR1dT[i,:,j] = obs_dR1dT[i,:,j]+emission_[k,]/(4*np.pi)*L[i,k]*np.exp(-cum_tau[count+count1,])*(-L[i,j]*dsigmadT_[j,])
-                    obs_dR1dnO2[i,:,j] = obs_dR1dnO2[i,:,j]+emission_[k,]/(4*np.pi)*L[i,k]*np.exp(-cum_tau[count+count1,])*(-L[i,j]*dsigmadnO2_[j,])
-                obs_dR1dnO2s[i,:,j] = obs_dR1dnO2s[i,:,j]+dednO2s_[j,]/(4*np.pi)*L[i,j]*np.exp(-cum_tau[count-1,])
+                # downstream layers' tau+emitting layer tau
+                total_tau = cum_tau[count-1,]+emitting_layer_tau[count,]
+            
+            # radiance
+            obs_R1[i,] = obs_R1[i,]+emission_[j,]/(4*np.pi)*L[i,j]*np.exp(-total_tau)
+            
+            # d(radiance)/d(emitting layer nO2s)
+            obs_dR1dnO2s[i,:,j] = obs_dR1dnO2s[i,:,j]+dednO2s_[j,]/(4*np.pi)*L[i,j]*np.exp(-total_tau)
+            
+            # d(radiance)/d(emitting layer temperature), without accounting for upstream layers
+            obs_dR1dT[i,:,j] = obs_dR1dT[i,:,j]+dedT_[j,]/(4*np.pi)*L[i,j]*np.exp(-total_tau)\
+            +emission_[j,]/(4*np.pi)*L[i,j]*np.exp(-total_tau)*(-detau_dT[count,])
+
+            # d(radiance)/d(emitting layer nO2), without accounting for upstream layers
+            obs_dR1dnO2[i,:,j] = obs_dR1dnO2[i,:,j]\
+            +emission_[j,]/(4*np.pi)*L[i,j]*np.exp(-total_tau)*(-detau_dnO2[count,])
+
+            # loop over upstream layers
+            for (count1,k) in enumerate(emitting_layer_idx[count+1:]):
+                total_tau = cum_tau[count+count1,]+emitting_layer_tau[count+count1+1,]
+                # d(radiance)/d(emitting layer temperature) due to altered emission from upstream layers
+                obs_dR1dT[i,:,j] = obs_dR1dT[i,:,j]\
+                +emission_[k,]/(4*np.pi)*L[i,k]*np.exp(-total_tau)*(-L[i,j]*dsigmadT_[j,])
+                # d(radiance)/d(emitting layer nO2) due to altered emission from upstream layers
+                obs_dR1dnO2[i,:,j] = obs_dR1dnO2[i,:,j]\
+                +emission_[k,]/(4*np.pi)*L[i,k]*np.exp(-total_tau)*(-L[i,j]*dsigmadnO2_[j,])
+        
         R1_oversampled_fft = convolve_fft(obs_R1[i,::-1],ILS,normalize_kernel=True)
         
         dR1dHW1E_oversampled_fft = convolve_fft(obs_R1[i,::-1],dILSdHW1E,normalize_kernel=False)
@@ -1243,14 +1297,14 @@ def F_airglow_forward_model_nO2Scale(w1,wavelength,L,p_profile,
     return obs_R2,jacobians
 
 def F_airglow_forward_model_no_absorption(w1,wavelength,L,p_profile,
-                                          nO2s_profile,T_profile,HW1E,w_shift,
-                                          nu=[],einsteinA=None,nO2_profile=None):
+                                          nO2s_profile,T_profile,HW1E,w_shift,T_profile_reference=None,
+                                          nu=None,einsteinA=None,nO2_profile=None):
     '''
     forward model to simulate scia-observed limb spectra for a profile scan
     output jacobians
     '''
-    if len(nu) == 0:
-        nu = 1e7/w1
+    nu = nu or 1e7/w1
+    T_profile_reference = T_profile_reference or T_profile.copy()
     dw1 = np.abs(np.median(np.diff(w1)))
     ndx = np.ceil(HW1E*3/dw1);
     xx = np.arange(ndx*2)*dw1-ndx*dw1;
@@ -1408,10 +1462,10 @@ class Retrieval_Results(object):
         fig,ax = plt.subplots(2,1,constrained_layout=True,figsize=(9,5),sharex=True)
         ax_y = ax[0]#fig.add_subplot(gs[0,0:2])
         ax_r = ax[1]#fig.add_subplot(gs[1,0:2])
-        mngr = plt.get_current_fig_manager()
-        geom = mngr.window.geometry()
-        x,y,dx,dy = geom.getRect()
-        mngr.window.setGeometry(0,100,dx,dy)
+#         mngr = plt.get_current_fig_manager()
+#         geom = mngr.window.geometry()
+#         x,y,dx,dy = geom.getRect()
+#         mngr.window.setGeometry(0,100,dx,dy)
         yy = self.yy
         yhat = self.yhat
         y0 = self.y0
@@ -1523,7 +1577,8 @@ class Forward_Model(object):
         return params
     
     def retrieve(self,radiance,radiance_error,
-                 params=None,max_iter=100,use_LM=False,max_diverging_step=5,**kwargs):
+                 params=None,max_iter=100,use_LM=False,
+                 max_diverging_step=5,converge_criterion_scale=1,**kwargs):
         
         if params is None:
             params = self.make_params()
@@ -1543,7 +1598,7 @@ class Forward_Model(object):
         result.if_success = True
         if use_LM:
             LM_gamma = 10.
-        while(dsigma2 > nstates and count < max_iter):
+        while(dsigma2 > nstates*converge_criterion_scale and count < max_iter):
             self.logger.info('Iteration {}'.format(count))
             if count != 0:
                 params.update_vectors(vector_name='value',vector=beta)
@@ -1645,12 +1700,16 @@ def F_msis_atm(tangent_height,latitude,longitude,time):
     p_profile = np.zeros_like(tangent_height)
     T_profile = np.zeros_like(tangent_height)
     nO2_profile = np.zeros_like(tangent_height)
+    # avoid printing msise00 messages at INFO level
+    clevel = logging.getLogger().level
+    logging.getLogger().setLevel(logging.WARNING)
     for ith in range(len(tangent_height)):
         atmos = msise00.run(time=ref_dt+dt.timedelta(seconds=time[ith]),altkm=tangent_height[ith],glat=latitude[ith],glon=longitude[ith])
         T_profile[ith] = np.array(atmos['Tn'].squeeze())
         total_density = np.array(atmos['Total'].squeeze())#kg/m3
         p_profile[ith] = total_density*287.058*T_profile[ith]
         nO2_profile[ith] = np.array(atmos['O2'].squeeze())*1e-6#molec/cm3
+    logging.getLogger().setLevel(clevel)
     return p_profile, T_profile, nO2_profile
 
 def F_th_to_Hlayer(th):
@@ -1661,12 +1720,22 @@ def F_th_to_Hlevel(th):
     dth = np.nanmean(np.diff(th))
     Hlevel = np.append(th,th[-1]+dth)
     return Hlevel
+def F_T_prior_error(h,dT_up=30,dT_low=10,h_divide=50,lh=2.5):
+    '''
+    generate prior error of temperature as a function of h in km
+    '''
+    T_prior = dT_low+(dT_up-dT_low)/(1+np.exp(-(h-h_divide)/lh))
+    return T_prior
 def F_fit_profile(tangent_height,radiance,radiance_error,wavelength,
                   startWavelength=1240,endWavelength=1300,
                   minTH=None,maxTH=None,w1_step=None,einsteinA=None,
-                  if_attenuation=True,n_nO2=0,nO2Scale_error=0.1,
-                  max_iter=10,msis_pt=True,time=None,latitude=None,longitude=None):
-    
+                  if_attenuation=True,n_nO2=None,nO2Scale_error=0.5,
+                  max_iter=10,msis_pt=True,time=None,latitude=None,longitude=None,
+                  dT_up=30,dT_low=10,h_divide=50,lh=2.5,
+                  use_LM=True,converge_criterion_scale=1):
+    '''
+    call this function to fit a collection of sciamachy tangent heights
+    '''
     if time is None:
         logging.warning('Time is needed to use MSIS!')
         msis_pt = False
@@ -1675,21 +1744,17 @@ def F_fit_profile(tangent_height,radiance,radiance_error,wavelength,
         msis_pt = False
     if endWavelength < 800:
         HW1E_prior = 0.3
-        if minTH is None:
-            minTH = 50;maxTH = 120;
-        if w1_step is None:
-            w1_step = -0.0002
-        if einsteinA is None:
-            einsteinA = 0.08693#10.1016/j.jqsrt.2010.05.011
+        minTH = minTH or 50
+        maxTH = maxTH or 120
+        w1_step = w1_step or -0.0002
+        einsteinA = einsteinA or 0.08693#10.1016/j.jqsrt.2010.05.011
     
     if startWavelength > 1100:
         HW1E_prior = 0.8
-        if minTH is None:
-            minTH = 20;maxTH = 120
-        if w1_step is None:
-            w1_step = -0.001
-        if einsteinA is None:
-            einsteinA = 2.27e-4
+        minTH = minTH or 25
+        maxTH = maxTH or 120
+        w1_step = w1_step or -0.001
+        einsteinA = einsteinA or 2.27e-4
     
     th_idx = np.argsort(tangent_height)
     tangent_height = np.sort(tangent_height)# TH has to go from low to high
@@ -1741,12 +1806,19 @@ def F_fit_profile(tangent_height,radiance,radiance_error,wavelength,
         # del T_profile_msis
     # w1 is the high res wavelength grid. has to be descending
     w1 = arange_(endWavelength,startWavelength,-np.abs(w1_step))#-0.0005
-    T_profile_e = np.ones(T_profile.shape)*20
-    T_profile_e[tangent_height<50] = 2
-    nO2s_profile_e = np.ones(nO2s_profile.shape)*nO2s_profile
-    nO2s_profile_e[nO2s_profile_e<0.1*np.mean(nO2s_profile)] = 0.1*np.mean(nO2s_profile)
-    p_profile_middle = p_profile+np.append(np.diff(p_profile),0.)/2
+    #T_profile_e = np.ones(T_profile.shape)*20
+    #T_profile_e[tangent_height<50] = 2
+    T_profile_e = F_T_prior_error(F_th_to_Hlayer(tangent_height),dT_up,dT_low,h_divide,lh)
+    #nO2s_profile_e = np.ones(nO2s_profile.shape)*nO2s_profile
+    #nO2s_profile_e[nO2s_profile_e<0.1*np.mean(nO2s_profile)] = 0.1*np.mean(nO2s_profile)
+    n1 = nO2s_profile.copy()
+    n1[n1<0]=0
+    nO2s_profile_e = 0.5*np.nanmean(n1)+n1*(np.nanmax(n1)-0.5*np.nanmean(n1))/np.nanmax(n1)
     
+    n_nO2 = n_nO2 or len(T_profile)
+    if n_nO2 > len(T_profile):
+        # cap number of free O2 layers to the max
+        n_nO2 = len(T_profile)
     if not if_attenuation:
         aOE = Forward_Model(func=F_airglow_forward_model_no_absorption,
                                   independent_vars=['w1','wavelength','L','p_profile','nu','einsteinA','nO2_profile'],
@@ -1755,9 +1827,10 @@ def F_fit_profile(tangent_height,radiance,radiance_error,wavelength,
         aOE.set_prior('T_profile',prior=T_profile,prior_error=T_profile_e,p_profile=p_profile,correlation_scaleHeight=1,vmin=50,vmax=500)
         aOE.set_prior('HW1E',prior=HW1E_prior,prior_error=HW1E_prior/2)
         aOE.set_prior('w_shift',prior=0.,prior_error=1.)
-        result = aOE.retrieve(radiance,radiance_error,max_iter=max_iter,
+        result = aOE.retrieve(radiance,radiance_error,max_iter=max_iter,use_LM=use_LM,
                               w1=w1,wavelength=wavelength,
-                              L=L,p_profile=p_profile,einsteinA=einsteinA,nO2_profile=nO2_profile)
+                              L=L,p_profile=p_profile,einsteinA=einsteinA,nO2_profile=nO2_profile,
+                              converge_criterion_scale=converge_criterion_scale)
         result.tangent_height = tangent_height
         result.THMask = THMask
         result.dZ = dZ
@@ -1778,28 +1851,29 @@ def F_fit_profile(tangent_height,radiance,radiance_error,wavelength,
         aOE.set_prior('T_profile',prior=T_profile,prior_error=T_profile_e,p_profile=p_profile,correlation_scaleHeight=1,vmin=50,vmax=500)
         aOE.set_prior('HW1E',prior=HW1E_prior,prior_error=HW1E_prior/2)
         aOE.set_prior('w_shift',prior=0.,prior_error=1.)
-        result = aOE.retrieve(radiance,radiance_error,max_iter=max_iter,
+        result = aOE.retrieve(radiance,radiance_error,max_iter=max_iter,use_LM=use_LM,
                               w1=w1,wavelength=wavelength,
-                              L=L,p_profile=p_profile,einsteinA=einsteinA,nO2_profile=nO2_profile)
+                              L=L,p_profile=p_profile,einsteinA=einsteinA,nO2_profile=nO2_profile,
+                              converge_criterion_scale=converge_criterion_scale)
     else:
         nO2Scale_profile = np.ones(n_nO2)
         nO2Scale_profile_e = np.ones(n_nO2)*nO2Scale_error
         aOE = Forward_Model(func=F_airglow_forward_model_nO2Scale,
                                   independent_vars=['w1','wavelength','L','p_profile','nu','T_profile_reference','einsteinA','nO2_profile'],
                                   param_names=['nO2s_profile','T_profile','HW1E','w_shift','nO2Scale_profile'])
-        aOE.set_prior('nO2s_profile',prior=nO2s_profile,prior_error=nO2s_profile_e,p_profile=p_profile,correlation_scaleHeight=1)
+        aOE.set_prior('nO2s_profile',prior=nO2s_profile,prior_error=nO2s_profile_e,p_profile=p_profile,correlation_scaleHeight=1,vmin=0)
         aOE.set_prior('T_profile',prior=T_profile,prior_error=T_profile_e,p_profile=p_profile,correlation_scaleHeight=1,vmin=50,vmax=500)
         aOE.set_prior('HW1E',prior=HW1E_prior,prior_error=HW1E_prior/2)
         aOE.set_prior('w_shift',prior=0.,prior_error=1.)
         aOE.set_prior('nO2Scale_profile',prior=nO2Scale_profile,prior_error=nO2Scale_profile_e,
                       p_profile=p_profile[0:len(nO2Scale_profile)],correlation_scaleHeight=1,vmin=0,vary=True)
-        result = aOE.retrieve(radiance,radiance_error,max_iter=max_iter,
+        result = aOE.retrieve(radiance,radiance_error,max_iter=max_iter,use_LM=use_LM,
                               w1=w1,wavelength=wavelength,
-                              L=L,p_profile=p_profile,einsteinA=einsteinA,nO2_profile=nO2_profile)
+                              L=L,p_profile=p_profile,einsteinA=einsteinA,nO2_profile=nO2_profile,
+                              converge_criterion_scale=converge_criterion_scale)
     result.tangent_height = tangent_height
     result.THMask = THMask
     result.dZ = dZ
-    result.p_profile_middle = p_profile_middle
     result.p_profile = p_profile
     result.T_profile_prior = T_profile
     if 'T_profile_msis' in locals().keys():
