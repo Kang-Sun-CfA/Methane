@@ -1813,10 +1813,6 @@ def F_fit_profile(tangent_height,radiance,radiance_error,wavelength,
     #nO2s_profile_e[nO2s_profile_e<0.1*np.mean(nO2s_profile)] = 0.1*np.mean(nO2s_profile)
     nO2s_profile = np.ones_like(nO2s_profile)*np.nanmean(nO2s_profile)
     nO2s_profile_e = nO2s_profile*100# no effective prior constraint on nO2s profile
-    if startWavelength > 1100:
-        n1 = nO2s_profile.copy()
-        n1[n1<0]=0
-        nO2s_profile_e = 0.5*np.nanmean(n1)+n1*(np.nanmax(n1)-0.5*np.nanmean(n1))/np.nanmax(n1)
     
     n_nO2 = n_nO2 or len(T_profile)
     if n_nO2 > len(T_profile):
