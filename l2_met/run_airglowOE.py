@@ -304,6 +304,9 @@ else:
                                 temperature_dofs=D_T_dofs,
                                 temperature_error=D_T_e,
                                 temperature_msis=D_T_msis,
+                                exited_O2=D_nO2s,
+                                exited_O2_dofs=D_nO2s_dofs,
+                                exited_O2_error=D_nO2s_e,
                                 chi2=D_chi2,
                                 rmse=D_rmse)
 #%%
@@ -456,5 +459,8 @@ else:
                                     temperature_dofs=S_T_dofs,
                                     temperature_error=S_T_e,
                                     temperature_msis=S_T_msis,
+                                    exited_O2=S_nO2s,
+                                    exited_O2_dofs=S_nO2s_dofs,
+                                    exited_O2_error=S_nO2s_e,
                                     chi2=S_chi2,
                                     rmse=S_rmse)
