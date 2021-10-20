@@ -74,7 +74,7 @@ class ISSF_Exposure(dict):
     '''
     Exposure of a single laser wavelength
     '''
-    def __init__(self,wavelength,data,nrow=None,ncol=None):
+    def __init__(self,wavelength,data,nrow=None,ncol=None,power=None):
         self.logger = logging.getLogger(__name__)
         # self.logger.info('creating an ISSF_Exposure instance')
         if nrow is None:
@@ -93,13 +93,24 @@ class ISSF_Exposure(dict):
         self.add('ncol',int(ncol))
         self.add('wavelength', wavelength)
         self.add('data', data)
+        self.add('power',power)
+        self.add('if_power_normalized',False)
     def add(self,key,value):
         self.__setitem__(key,value)
     def flip_columns(self):
         self['data'] = self['data'][:,::-1]
     def flip_rows(self):
         self['data'] = self['data'][::-1,:]
-    def plot(self,existing_ax=None):
+    def normalize_power(self):
+        if self['if_power_normalized'] == True:
+            self.logger.warning('already normalized by power!')
+            return
+        if self['power'] is None:
+            self.logger.error('you need to provide a laser power value to normalize power!')
+            return
+        self['data'] = self['data']/self['power']
+        self['if_power_normalized']=True
+    def plot(self,existing_ax=None,scale='log',**kwargs):
         if existing_ax is None:
             self.logger.info('axes not supplied, creating one')
             fig,ax = plt.subplots(1,1,figsize=(10,5))
@@ -109,7 +120,14 @@ class ISSF_Exposure(dict):
         figout = {}
         figout['fig'] = fig
         figout['ax'] = ax
-        figout['pc'] = ax.pcolormesh(self['cols_1based'],self['rows_1based'],self['data'],shading='auto')
+        if scale == 'log':
+            from matplotlib.colors import LogNorm
+            figout['pc'] = ax.pcolormesh(self['cols_1based'],self['rows_1based'],
+                                         self['data'],shading='auto',norm=LogNorm(),
+                                         **kwargs)
+        else:
+            figout['pc'] = ax.pcolormesh(self['cols_1based'],self['rows_1based'],
+                                         self['data'],shading='auto',**kwargs)
         return figout
     def remove_straylight(self,K_far,sum_K_far=None,n_iter=3):
         if K_far is None:
