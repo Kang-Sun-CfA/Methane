@@ -63,8 +63,8 @@ def F_generate_control(if_save_txt,
                        sigma_max_th_mlt=120.,
                        sigma_w1_step=-0.0002,
                        sigma_r_per_e=1e7,
-                       sigma_nO2Scale=6,
-                       sigma_nO2Scale_mlt=6,
+                       sigma_nO2Scale=99,
+                       sigma_nO2Scale_mlt=99,
                        sigma_iy0=0,sigma_iy1=100,
                        sigma_ix0=0,sigma_ix1=100,):
     import yaml
@@ -2096,6 +2096,11 @@ class Level2_Saver(object):
         self.d_rmse.units = 'same as radiance'
         self.d_rmse._Storage = 'contiguous'
         
+        self.d_if_success = self.ncdelta.createVariable('if_success',np.int8,dimensions=('along_track','across_track'))
+        self.d_if_success = 'if retrieve is successful'
+        self.d_if_success = ''
+        self.d_if_success = 'contiguous'
+        
         self.d_Jprior = self.ncdelta.createVariable('Jprior',np.float32,dimensions=('along_track','across_track'),fill_value=-1.0e+30)
         self.d_Jprior.comment = 'distance between solution and prior normalized by prior error'
         self.d_Jprior.units = ''
@@ -2204,6 +2209,11 @@ class Level2_Saver(object):
         self.s_rmse.comment = 'goodness of fit indicated by residual root mean square'
         self.s_rmse.units = 'same as radiance'
         self.s_rmse._Storage = 'contiguous'
+        
+        self.s_if_success = self.ncsigma.createVariable('if_success',np.int8,dimensions=('along_track','across_track'))
+        self.s_if_success = 'if retrieve is successful'
+        self.s_if_success = ''
+        self.s_if_success = 'contiguous'
         
         self.s_Jprior = self.ncsigma.createVariable('Jprior',np.float32,dimensions=('along_track','across_track'),fill_value=-1.0e+30)
         self.s_Jprior.comment = 'distance between solution and prior normalized by prior error'

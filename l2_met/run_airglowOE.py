@@ -144,7 +144,6 @@ else:
     s.nc.close()
 #%%
 import time
-Time = time.time()
 # set aside memory for data arrays
 D_nO2s = np.full((D_ngranule,D_nft,D_nth),np.nan,dtype=np.float32)
 D_T = np.full((D_ngranule,D_nft,D_nth),np.nan,dtype=np.float32)
@@ -166,6 +165,7 @@ D_w_shift_dofs = np.full((D_ngranule,D_nft),np.nan,dtype=np.float32)
 D_w_shift_e = np.full((D_ngranule,D_nft),np.nan,dtype=np.float32)
 D_chi2 = np.full((D_ngranule,D_nft),np.nan,dtype=np.float32)
 D_rmse = np.full((D_ngranule,D_nft),np.nan,dtype=np.float32)
+D_if_success = np.zeros((D_ngranule,D_nft),dtype=np.int8)
 D_Jprior = np.full((D_ngranule,D_nft),np.nan,dtype=np.float32)
 D_niter = np.full((D_ngranule,D_nft),np.nan,dtype=np.int8)
 D_tangent_height = np.full((D_ngranule,D_nft,D_nth),np.nan,dtype=np.float32)
@@ -192,13 +192,13 @@ for (igranule,granule) in enumerate(D_granules):
         continue
     if igranule < control['delta start along-track (0-based)'] or igranule > control['delta end along-track (0-based)']:
         continue
-    print('granule {}'.format(igranule))
     for ift in range(D_nft):
         if ift < control['delta start across-track (0-based)'] or ift > control['delta end across-track (0-based)']:
             continue
-        print('granule {}, footprint {}'.format(igranule,ift))
+        logging.warning('delta granule {}, footprint {}'.format(igranule,ift))
         try:
             # a series of tangent height radiance spectra are concatenated and fit together
+            Time = time.time()
             result = F_fit_profile(tangent_height=granule['tangent_height'][:,ift],
                                    radiance=granule['radiance'][:,ift,:].squeeze(),
                                    radiance_error=granule['radiance_error'][:,ift,:].squeeze(),
@@ -242,12 +242,15 @@ for (igranule,granule) in enumerate(D_granules):
             D_w_shift_e[igranule,ift] = result.params['w_shift'].posterior_error
             D_chi2[igranule,ift] = result.chi2
             D_Jprior[igranule,ift] = result.Jprior
+            D_if_success[igranule,ift] = np.int8(result.if_success)
             D_rmse[igranule,ift] = result.rmse
             D_niter[igranule,ift] = result.niter
+            logging.warning('chi2={:.2f},rmse={:.2E},niter={},if_success={}'.format(result.chi2,result.rmse,result.niter,result.if_success))
+            logging.warning('takes {:.2f} s'.format(time.time()-Time))
         except Exception as e:
             print(e)
-print('singlet delta takes')
-print(time.time()-Time)
+            D_if_success[igranule,ift] = False
+
 #%% save data to a netcdf4 file if control['if save single-pixel file'] is False
 if not control['if save single-pixel file']:
     save_path = os.path.join(control['save directory'],os.path.splitext(os.path.split(control['sciamachy file path'])[-1])[0]+control['file suffix']+'.nc')
@@ -285,6 +288,7 @@ if not control['if save single-pixel file']:
     
     f.set_variable(f.ncdelta.variables['chi2'],D_chi2)
     f.set_variable(f.ncdelta.variables['rmse'],D_rmse)
+    f.set_variable(f.ncdelta.variables['if_success'],D_if_success)
     f.set_variable(f.ncdelta.variables['Jprior'],D_Jprior)
     f.set_variable(f.ncdelta.variables['number_of_iterations'],D_niter)
     if D_n_nO2 > 0:
@@ -314,7 +318,7 @@ if not control['if A band']:
     if not control['if save single-pixel file']:
         f.close()
 else:
-    Time = time.time()
+    
     S_nO2s = np.full((S_ngranule,S_nft,S_nth),np.nan,dtype=np.float32)
     S_T = np.full((S_ngranule,S_nft,S_nth),np.nan,dtype=np.float32)
     S_nO2s_dofs = np.full((S_ngranule,S_nft,S_nth),np.nan,dtype=np.float32)
@@ -335,6 +339,7 @@ else:
     S_w_shift_e = np.full((D_ngranule,D_nft),np.nan,dtype=np.float32)
     S_chi2 = np.full((S_ngranule,S_nft),np.nan,dtype=np.float32)
     S_rmse = np.full((S_ngranule,S_nft),np.nan,dtype=np.float32)
+    S_if_success = np.zeros((S_ngranule,S_nft),dtype=np.int8)
     S_Jprior = np.full((S_ngranule,S_nft),np.nan,dtype=np.float32)
     S_niter = np.full((S_ngranule,S_nft),np.nan,dtype=np.int8)
     S_tangent_height = np.full((S_ngranule,S_nft,S_nth),np.nan,dtype=np.float32)
@@ -359,12 +364,12 @@ else:
             continue
         if igranule < control['sigma start along-track (0-based)'] or igranule > control['sigma end along-track (0-based)']:
             continue
-        print('granule {}'.format(igranule))
         for ift in range(S_nft):
             if ift < control['sigma start across-track (0-based)'] or ift > control['sigma end across-track (0-based)']:
                 continue
-            print('granule {}, footprint {}'.format(igranule,ift))
+            logging.warning('sigma granule {}, footprint {}'.format(igranule,ift))
             try:
+                Time = time.time()
                 result = F_fit_profile(tangent_height=granule['tangent_height'][:,ift],
                                        radiance=granule['radiance'][:,ift,:].squeeze(),
                                        radiance_error=granule['radiance_error'][:,ift,:].squeeze(),
@@ -408,12 +413,15 @@ else:
                 S_chi2[igranule,ift] = result.chi2
                 S_Jprior[igranule,ift] = result.Jprior
                 S_rmse[igranule,ift] = result.rmse
+                S_if_success[igranule,ift] = np.int8(result.if_success)
                 S_niter[igranule,ift] = result.niter
+                logging.warning('chi2={:.2f},rmse={:.2E},niter={},if_success={}'.format(result.chi2,result.rmse,result.niter,result.if_success))
+                logging.warning('takes {:.2f} s'.format(time.time()-Time))
             except Exception as e:
                 print(e)
+                S_if_success[igranule,ift] = False
 
-    print('singlet sigma takes')
-    print(time.time()-Time)
+    logging.warning('singlet sigma takes {:.2f} s'.format(time.time()-Time))
     if not control['if save single-pixel file']:
         # create the singlet sigma group
         f.create_singlet_sigma_group(group_name='singlet_sigma',if_save_nO2Scale= (S_n_nO2>0))
@@ -439,6 +447,7 @@ else:
         
         f.set_variable(f.ncsigma.variables['chi2'],S_chi2)
         f.set_variable(f.ncsigma.variables['rmse'],S_rmse)
+        f.set_variable(f.ncsigma.variables['if_success'],S_if_success)
         f.set_variable(f.ncsigma.variables['Jprior'],S_Jprior)
         f.set_variable(f.ncsigma.variables['number_of_iterations'],S_niter)
         if S_n_nO2 > 0:
