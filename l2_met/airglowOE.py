@@ -1730,9 +1730,10 @@ def F_fit_profile(tangent_height,radiance,radiance_error,wavelength,
                   startWavelength=1240,endWavelength=1300,
                   minTH=None,maxTH=None,w1_step=None,einsteinA=None,
                   if_attenuation=True,n_nO2=None,nO2Scale_error=0.5,
-                  max_iter=10,msis_pt=True,time=None,latitude=None,longitude=None,
+                  max_iter=6,msis_pt=True,time=None,latitude=None,longitude=None,
                   dT_up=30,dT_low=10,h_divide=50,lh=2.5,
-                  use_LM=True,converge_criterion_scale=1):
+                  use_LM=True,max_diverging_step=3,
+                  converge_criterion_scale=1,nO2s_prior_option='constant'):
     '''
     call this function to fit a collection of sciamachy tangent heights
     '''
@@ -1809,10 +1810,12 @@ def F_fit_profile(tangent_height,radiance,radiance_error,wavelength,
     #T_profile_e = np.ones(T_profile.shape)*20
     #T_profile_e[tangent_height<50] = 2
     T_profile_e = F_T_prior_error(F_th_to_Hlayer(tangent_height),dT_up,dT_low,h_divide,lh)
-    #nO2s_profile_e = np.ones(nO2s_profile.shape)*nO2s_profile
-    #nO2s_profile_e[nO2s_profile_e<0.1*np.mean(nO2s_profile)] = 0.1*np.mean(nO2s_profile)
-    nO2s_profile = np.ones_like(nO2s_profile)*np.nanmean(nO2s_profile)
-    nO2s_profile_e = nO2s_profile*100# no effective prior constraint on nO2s profile
+    if nO2s_prior_option == 'linear':
+        nO2s_profile_e = np.ones(nO2s_profile.shape)*nO2s_profile
+        nO2s_profile_e[nO2s_profile_e<0.1*np.mean(nO2s_profile)] = 0.1*np.mean(nO2s_profile)
+    elif nO2s_prior_option == 'constant':
+        nO2s_profile = np.ones_like(nO2s_profile)*np.nanmean(nO2s_profile)
+        nO2s_profile_e = nO2s_profile*100# no effective prior constraint on nO2s profile
     
     n_nO2 = n_nO2 or len(T_profile)
     if n_nO2 > len(T_profile):
@@ -1829,7 +1832,7 @@ def F_fit_profile(tangent_height,radiance,radiance_error,wavelength,
         result = aOE.retrieve(radiance,radiance_error,max_iter=max_iter,use_LM=use_LM,
                               w1=w1,wavelength=wavelength,
                               L=L,p_profile=p_profile,einsteinA=einsteinA,nO2_profile=nO2_profile,
-                              converge_criterion_scale=converge_criterion_scale)
+                              converge_criterion_scale=converge_criterion_scale,max_diverging_step=max_diverging_step)
         result.tangent_height = tangent_height
         result.THMask = THMask
         result.dZ = dZ
@@ -1853,7 +1856,7 @@ def F_fit_profile(tangent_height,radiance,radiance_error,wavelength,
         result = aOE.retrieve(radiance,radiance_error,max_iter=max_iter,use_LM=use_LM,
                               w1=w1,wavelength=wavelength,
                               L=L,p_profile=p_profile,einsteinA=einsteinA,nO2_profile=nO2_profile,
-                              converge_criterion_scale=converge_criterion_scale)
+                              converge_criterion_scale=converge_criterion_scale,max_diverging_step=max_diverging_step)
     else:
         nO2Scale_profile = np.ones(n_nO2)
         nO2Scale_profile_e = np.ones(n_nO2)*nO2Scale_error
@@ -1869,7 +1872,7 @@ def F_fit_profile(tangent_height,radiance,radiance_error,wavelength,
         result = aOE.retrieve(radiance,radiance_error,max_iter=max_iter,use_LM=use_LM,
                               w1=w1,wavelength=wavelength,
                               L=L,p_profile=p_profile,einsteinA=einsteinA,nO2_profile=nO2_profile,
-                              converge_criterion_scale=converge_criterion_scale)
+                              converge_criterion_scale=converge_criterion_scale,max_diverging_step=max_diverging_step)
     result.tangent_height = tangent_height
     result.THMask = THMask
     result.dZ = dZ
