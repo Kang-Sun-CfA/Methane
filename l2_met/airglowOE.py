@@ -12,7 +12,7 @@ import sys, os, glob
 from netCDF4 import Dataset
 import matplotlib.pyplot as plt
 from astropy.convolution import convolve_fft
-from scipy.interpolate import splrep, splev
+from scipy.interpolate import splrep, splev, RegularGridInterpolator
 from scipy.spatial import ConvexHull
 import logging
 import warnings
@@ -20,6 +20,7 @@ import inspect
 from collections import OrderedDict
 from calendar import monthrange
 from scipy.stats import binned_statistic
+from scipy.io import loadmat
 
 # In this "robust" version of arange the grid doesn't suffer 
 # from the shift of the nodes due to error accumulation.
@@ -1730,10 +1731,12 @@ def F_fit_profile(tangent_height,radiance,radiance_error,wavelength,
                   startWavelength=1240,endWavelength=1300,
                   minTH=None,maxTH=None,w1_step=None,einsteinA=None,
                   if_attenuation=True,n_nO2=None,nO2Scale_error=0.5,
-                  max_iter=6,msis_pt=True,time=None,latitude=None,longitude=None,
+                  max_iter=6,msis_pt=True,time=None,
+                  latitude=None,longitude=None,solar_zenith_angle=None,
                   dT_up=30,dT_low=10,h_divide=50,lh=2.5,
                   use_LM=True,max_diverging_step=3,
-                  converge_criterion_scale=1,nO2s_prior_option='constant'):
+                  converge_criterion_scale=1,nO2s_prior_option='constant',
+                  nO2s_climatology_path=None):
     '''
     call this function to fit a collection of sciamachy tangent heights
     '''
@@ -1759,11 +1762,15 @@ def F_fit_profile(tangent_height,radiance,radiance_error,wavelength,
     
     th_idx = np.argsort(tangent_height)
     tangent_height = np.sort(tangent_height)# TH has to go from low to high
+    if solar_zenith_angle:
+        solar_zenith_angle = solar_zenith_angle[th_idx]
     radiance = radiance[th_idx,:]
     radiance_error = radiance_error[th_idx,:]
     waveMask = (np.mean(wavelength,axis=0) >= startWavelength) & (np.mean(wavelength,axis=0) <= endWavelength) & (~np.isnan(np.mean(radiance,axis=0)))
     THMask = (~np.isnan(tangent_height)) & (tangent_height < maxTH) & (tangent_height > minTH)
     tangent_height = tangent_height[THMask]
+    if solar_zenith_angle:
+        solar_zenith_angle = solar_zenith_angle[THMask]
     wavelength = wavelength[np.ix_(THMask,waveMask)]
     radiance = radiance[np.ix_(THMask,waveMask)]
     radiance_error = radiance_error[np.ix_(THMask,waveMask)]   
@@ -1816,6 +1823,18 @@ def F_fit_profile(tangent_height,radiance,radiance_error,wavelength,
     elif nO2s_prior_option == 'constant':
         nO2s_profile = np.ones_like(nO2s_profile)*np.nanmean(nO2s_profile)
         nO2s_profile_e = nO2s_profile*100# no effective prior constraint on nO2s profile
+    elif nO2s_prior_option == 'climatology':
+        if nO2s_climatology_path is None or solar_zenith_angle is None:
+            logging.warning('to use nO2s climatology, you need to provide both sza and nO2s_climatology_path! Assuming constant')
+            nO2s_profile = np.ones_like(nO2s_profile)*np.nanmean(nO2s_profile)
+            nO2s_profile_e = nO2s_profile*100# no effective prior constraint on nO2s profile
+        else:
+            d=loadmat(nO2s_climatology_path,squeeze_me=True)
+            interp_func = RegularGridInterpolator((np.float64(d['sza']),np.float64(d['H'])),np.float64(d['nO2s']),bounds_error=False,fill_value=np.nan)
+            nO2s_profile = interp_func((np.float64(solar_zenith_angle),np.float64(F_th_to_Hlayer(tangent_height))))
+            nO2s_profile[np.isnan(nO2s_profile)] = 0
+            nO2s_profile_e = nO2s_profile.copy()
+            nO2s_profile_e[nO2s_profile_e < 0.2*np.nanmax(nO2s_profile)] = 0.2*np.nanmax(nO2s_profile)
     
     n_nO2 = n_nO2 or len(T_profile)
     if n_nO2 > len(T_profile):
@@ -1836,7 +1855,7 @@ def F_fit_profile(tangent_height,radiance,radiance_error,wavelength,
         result.tangent_height = tangent_height
         result.THMask = THMask
         result.dZ = dZ
-        result.p_profile_middle = p_profile_middle
+#         result.p_profile_middle = p_profile_middle
         result.p_profile = p_profile
         result.T_profile_prior = T_profile
         if 'T_profile_msis' in locals().keys():

@@ -77,6 +77,12 @@ def F_save_single_pixel(fn,iy,ix,ny,nx=8,nth=15,**kwargs):
         logging.info('saving {}'.format(k))
         save_dict[k] = data
     savemat(fn,save_dict)
+def F_x2(sza,sza1=70,sza2=95,minTH1=25,minTH2=40):
+    if sza<=sza1:
+        return minTH1
+    if sza>=sza2:
+        return minTH2
+    return ((sza-sza1)/(sza2-sza1))**2*(minTH2-minTH1)+minTH1
 #%%
 if if_mlt_or_not:
     D_startWavelength = control['delta start wavelength']
@@ -199,16 +205,24 @@ for (igranule,granule) in enumerate(D_granules):
         try:
             # a series of tangent height radiance spectra are concatenated and fit together
             Time = time.time()
+            if if_mlt_or_not:
+                pixel_minTH = D_minTH
+            else:
+                pixel_sza=np.nanmean(granule['solar_zenith_angle'][:,ift])
+                pixel_minTH = F_x2(pixel_sza,sza1=70,sza2=95,minTH1=D_minTH,minTH2=40)
+                if pixel_minTH != D_minTH:
+                    logging.warning('min TH is changed from {} to {:.2f} km at sza of {:.2f}'.format(D_minTH,pixel_minTH,pixel_sza))
             result = F_fit_profile(tangent_height=granule['tangent_height'][:,ift],
                                    radiance=granule['radiance'][:,ift,:].squeeze(),
                                    radiance_error=granule['radiance_error'][:,ift,:].squeeze(),
                                    wavelength=granule['wavelength'],
                                    startWavelength=D_startWavelength,
                                    endWavelength=D_endWavelength,
-                                   minTH=D_minTH,maxTH=D_maxTH,w1_step=D_w1_step,
+                                   minTH=pixel_minTH,maxTH=D_maxTH,w1_step=D_w1_step,
                                    n_nO2=D_n_nO2,msis_pt=control['if use msis'],time=granule['time'],
                                    latitude=granule['latitude'][:,ift],
-                                   longitude=granule['longitude'][:,ift])
+                                   longitude=granule['longitude'][:,ift],nO2s_prior_option='constant',
+                                   max_diverging_step=3,max_iter=6)
             D_nO2s[igranule,ift,result.THMask] = result.params['nO2s_profile'].value
             D_nO2s_dofs[igranule,ift,result.THMask] = result.params['nO2s_profile'].dofs
             D_nO2s_e[igranule,ift,result.THMask] = result.params['nO2s_profile'].posterior_error
@@ -223,15 +237,15 @@ for (igranule,granule) in enumerate(D_granules):
                 tmp = np.full_like(result.params['nO2s_profile'].value,np.nan)
                 tmp[0:D_n_nO2] = result.params['nO2Scale_profile'].value
                 D_nO2Scale[igranule,ift,result.THMask] = tmp
-                
+
                 tmp = np.full_like(result.params['nO2s_profile'].value,np.nan)
                 tmp[0:D_n_nO2] = result.params['nO2Scale_profile'].dofs
                 D_nO2Scale_dofs[igranule,ift,result.THMask] = tmp
-                
+
                 tmp = np.full_like(result.params['nO2s_profile'].value,np.nan)
                 tmp[0:D_n_nO2] = result.params['nO2Scale_profile'].posterior_error
                 D_nO2Scale_e[igranule,ift,result.THMask] = tmp
-            
+
             D_tangent_height[igranule,ift,result.THMask] = result.tangent_height
             D_dZ[igranule,ift,result.THMask] = result.dZ
             D_HW1E[igranule,ift] = result.params['HW1E'].value
@@ -379,7 +393,8 @@ else:
                                        minTH=S_minTH,maxTH=S_maxTH,w1_step=S_w1_step,
                                        n_nO2=S_n_nO2,msis_pt=control['if use msis'],time=granule['time'],
                                        latitude=granule['latitude'][:,ift],
-                                       longitude=granule['longitude'][:,ift])
+                                       longitude=granule['longitude'][:,ift],nO2s_prior_option='constant',
+                                       max_diverging_step=3,max_iter=6)
                 S_nO2s[igranule,ift,result.THMask] = result.params['nO2s_profile'].value
                 S_nO2s_dofs[igranule,ift,result.THMask] = result.params['nO2s_profile'].dofs
                 S_nO2s_e[igranule,ift,result.THMask] = result.params['nO2s_profile'].posterior_error
