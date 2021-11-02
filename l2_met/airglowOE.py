@@ -1731,7 +1731,7 @@ def F_fit_profile(tangent_height,radiance,radiance_error,wavelength,
                   startWavelength=1240,endWavelength=1300,
                   minTH=None,maxTH=None,w1_step=None,einsteinA=None,
                   if_attenuation=True,n_nO2=None,nO2Scale_error=0.5,
-                  max_iter=6,msis_pt=True,time=None,
+                  max_iter=5,msis_pt=True,time=None,
                   latitude=None,longitude=None,solar_zenith_angle=None,
                   dT_up=30,dT_low=10,h_divide=50,lh=2.5,
                   use_LM=True,max_diverging_step=3,
@@ -1762,14 +1762,14 @@ def F_fit_profile(tangent_height,radiance,radiance_error,wavelength,
     
     th_idx = np.argsort(tangent_height)
     tangent_height = np.sort(tangent_height)# TH has to go from low to high
-    if solar_zenith_angle:
+    if solar_zenith_angle is not None:
         solar_zenith_angle = solar_zenith_angle[th_idx]
     radiance = radiance[th_idx,:]
     radiance_error = radiance_error[th_idx,:]
     waveMask = (np.mean(wavelength,axis=0) >= startWavelength) & (np.mean(wavelength,axis=0) <= endWavelength) & (~np.isnan(np.mean(radiance,axis=0)))
     THMask = (~np.isnan(tangent_height)) & (tangent_height < maxTH) & (tangent_height > minTH)
     tangent_height = tangent_height[THMask]
-    if solar_zenith_angle:
+    if solar_zenith_angle is not None:
         solar_zenith_angle = solar_zenith_angle[THMask]
     wavelength = wavelength[np.ix_(THMask,waveMask)]
     radiance = radiance[np.ix_(THMask,waveMask)]

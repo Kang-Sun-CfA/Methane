@@ -209,7 +209,7 @@ for (igranule,granule) in enumerate(D_granules):
                 pixel_minTH = D_minTH
             else:
                 pixel_sza=np.nanmean(granule['solar_zenith_angle'][:,ift])
-                pixel_minTH = F_x2(pixel_sza,sza1=70,sza2=95,minTH1=D_minTH,minTH2=40)
+                pixel_minTH = F_x2(pixel_sza,sza1=60,sza2=102,minTH1=D_minTH,minTH2=42)
                 if pixel_minTH != D_minTH:
                     logging.warning('min TH is changed from {} to {:.2f} km at sza of {:.2f}'.format(D_minTH,pixel_minTH,pixel_sza))
             result = F_fit_profile(tangent_height=granule['tangent_height'][:,ift],
@@ -222,7 +222,7 @@ for (igranule,granule) in enumerate(D_granules):
                                    n_nO2=D_n_nO2,msis_pt=control['if use msis'],time=granule['time'],
                                    latitude=granule['latitude'][:,ift],
                                    longitude=granule['longitude'][:,ift],nO2s_prior_option='constant',
-                                   max_diverging_step=3,max_iter=6)
+                                   max_diverging_step=4,max_iter=6)
             D_nO2s[igranule,ift,result.THMask] = result.params['nO2s_profile'].value
             D_nO2s_dofs[igranule,ift,result.THMask] = result.params['nO2s_profile'].dofs
             D_nO2s_e[igranule,ift,result.THMask] = result.params['nO2s_profile'].posterior_error
