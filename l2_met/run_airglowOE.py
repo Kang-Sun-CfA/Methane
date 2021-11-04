@@ -131,14 +131,14 @@ s.loadData(if_close_file=False,startWavelength=1200,endWavelength=1340)
 D_granules = s.divideProfiles(radiancePerElectron=control['delta radiance per electron'])
 D_ngranule = len(D_granules)
 D_nft = D_granules[0]['tangent_height'].shape[1]
-D_nth = D_granules[0]['tangent_height'].shape[0]
+D_nth = int(np.max([D_granules[i]['tangent_height'].shape[0] for i in range(len(D_granules))]))
 if control['if A band']: 
     # load singlet sigma band data
     s.loadData(if_close_file=True,startWavelength=750,endWavelength=780)
     S_granules = s.divideProfiles(radiancePerElectron=control['sigma radiance per electron'])
     S_ngranule = len(S_granules)
     S_nft = S_granules[0]['tangent_height'].shape[1]
-    S_nth = S_granules[0]['tangent_height'].shape[0]
+    S_nth = int(np.max([S_granules[i]['tangent_height'].shape[0] for i in range(len(S_granules))]))#S_granules[0]['tangent_height'].shape[0]
     # the shape and geometry should be exactly the same for singlet delta and sigma bands
     if S_ngranule != D_ngranule:
         sys.exit('along track dimensions do not match between sigma and delta bands!')
@@ -180,22 +180,25 @@ D_time = np.full((D_ngranule,D_nth),np.nan,dtype=np.float64)
 D_dZ = np.full((D_ngranule,D_nft,D_nth),np.nan,dtype=np.float32)
 D_latitude = np.full((D_ngranule,D_nft,D_nth),np.nan,dtype=np.float32)
 D_longitude = np.full((D_ngranule,D_nft,D_nth),np.nan,dtype=np.float32)
-
+logging.warning('starting orbit {}'.format(os.path.split(control['sciamachy file path'])[-1]))
 for (igranule,granule) in enumerate(D_granules):
-    if granule['tangent_height'].shape[0] != D_nth:
-        continue
+#     if granule['tangent_height'].shape[0] != D_nth:# try to save inconsistent tangent_heights
+#         continue
+    local_D_nth = granule['tangent_height'].shape[0]
+        
     for ift in range(D_nft):
         th_idx = np.argsort(granule['tangent_height'][:,ift])# TH has to go from low to high
-        D_latitude[igranule,ift,] = granule['latitude'][th_idx,ift]
-        D_longitude[igranule,ift,] = granule['longitude'][th_idx,ift]
-        D_tangent_height[igranule,ift,] = granule['tangent_height'][th_idx,ift]
-    D_solar_zenith_angle[igranule,] = granule['solar_zenith_angle'].T
-    D_time[igranule,:] = granule['time']
+        D_latitude[igranule,ift,0:local_D_nth] = granule['latitude'][th_idx,ift]
+        D_longitude[igranule,ift,0:local_D_nth] = granule['longitude'][th_idx,ift]
+        D_tangent_height[igranule,ift,0:local_D_nth] = granule['tangent_height'][th_idx,ift]
+    D_solar_zenith_angle[igranule,:,0:local_D_nth] = granule['solar_zenith_angle'].T
+    D_time[igranule,0:local_D_nth] = granule['time']
 #%%
 # loop through along- and across-track
 for (igranule,granule) in enumerate(D_granules):
-    if granule['tangent_height'].shape[0] != D_nth:
-        continue
+#     if granule['tangent_height'].shape[0] != D_nth:
+#         continue
+    local_D_nth = granule['tangent_height'].shape[0]
     if igranule < control['delta start along-track (0-based)'] or igranule > control['delta end along-track (0-based)']:
         continue
     for ift in range(D_nft):
@@ -223,31 +226,31 @@ for (igranule,granule) in enumerate(D_granules):
                                    latitude=granule['latitude'][:,ift],
                                    longitude=granule['longitude'][:,ift],nO2s_prior_option='constant',
                                    max_diverging_step=4,max_iter=6)
-            D_nO2s[igranule,ift,result.THMask] = result.params['nO2s_profile'].value
-            D_nO2s_dofs[igranule,ift,result.THMask] = result.params['nO2s_profile'].dofs
-            D_nO2s_e[igranule,ift,result.THMask] = result.params['nO2s_profile'].posterior_error
-            D_T[igranule,ift,result.THMask] = result.params['T_profile'].value
-            D_T_dofs[igranule,ift,result.THMask] = result.params['T_profile'].dofs
-            D_T_e[igranule,ift,result.THMask] = result.params['T_profile'].posterior_error
-            D_nO2_msis[igranule,ift,result.THMask] = result.nO2_profile
+            D_nO2s[igranule,ift,0:local_D_nth][result.THMask] = result.params['nO2s_profile'].value
+            D_nO2s_dofs[igranule,ift,0:local_D_nth][result.THMask] = result.params['nO2s_profile'].dofs
+            D_nO2s_e[igranule,ift,0:local_D_nth][result.THMask] = result.params['nO2s_profile'].posterior_error
+            D_T[igranule,ift,0:local_D_nth][result.THMask] = result.params['T_profile'].value
+            D_T_dofs[igranule,ift,0:local_D_nth][result.THMask] = result.params['T_profile'].dofs
+            D_T_e[igranule,ift,0:local_D_nth][result.THMask] = result.params['T_profile'].posterior_error
+            D_nO2_msis[igranule,ift,0:local_D_nth][result.THMask] = result.nO2_profile
             if hasattr(result,'T_profile_msis'):
-                D_T_msis[igranule,ift,result.THMask] = result.T_profile_msis
+                D_T_msis[igranule,ift,0:local_D_nth][result.THMask] = result.T_profile_msis
             # save O2 number density scaling factor if at least one layer is adjusted
             if D_n_nO2 > 0:
                 tmp = np.full_like(result.params['nO2s_profile'].value,np.nan)
                 tmp[0:D_n_nO2] = result.params['nO2Scale_profile'].value
-                D_nO2Scale[igranule,ift,result.THMask] = tmp
+                D_nO2Scale[igranule,ift,0:local_D_nth][result.THMask] = tmp
 
                 tmp = np.full_like(result.params['nO2s_profile'].value,np.nan)
                 tmp[0:D_n_nO2] = result.params['nO2Scale_profile'].dofs
-                D_nO2Scale_dofs[igranule,ift,result.THMask] = tmp
+                D_nO2Scale_dofs[igranule,ift,0:local_D_nth][result.THMask] = tmp
 
                 tmp = np.full_like(result.params['nO2s_profile'].value,np.nan)
                 tmp[0:D_n_nO2] = result.params['nO2Scale_profile'].posterior_error
-                D_nO2Scale_e[igranule,ift,result.THMask] = tmp
+                D_nO2Scale_e[igranule,ift,0:local_D_nth][result.THMask] = tmp
 
-            D_tangent_height[igranule,ift,result.THMask] = result.tangent_height
-            D_dZ[igranule,ift,result.THMask] = result.dZ
+            D_tangent_height[igranule,ift,0:local_D_nth][result.THMask] = result.tangent_height
+            D_dZ[igranule,ift,0:local_D_nth][result.THMask] = result.dZ
             D_HW1E[igranule,ift] = result.params['HW1E'].value
             D_HW1E_dofs[igranule,ift] = result.params['HW1E'].dofs
             D_HW1E_e[igranule,ift] = result.params['HW1E'].posterior_error
@@ -262,7 +265,8 @@ for (igranule,granule) in enumerate(D_granules):
             logging.warning('chi2={:.2f},rmse={:.2E},niter={},if_success={}'.format(result.chi2,result.rmse,result.niter,result.if_success))
             logging.warning('takes {:.2f} s'.format(time.time()-Time))
         except Exception as e:
-            print(e)
+            logging.warning('delta granule {}, footprint {} gives error. message:'.format(igranule,ift))
+            logging.warning(e)
             D_if_success[igranule,ift] = False
 
 #%% save data to a netcdf4 file if control['if save single-pixel file'] is False
@@ -364,18 +368,20 @@ else:
     S_longitude = np.full((S_ngranule,S_nft,S_nth),np.nan,dtype=np.float32)
     
     for (igranule,granule) in enumerate(S_granules):
-        if granule['tangent_height'].shape[0] != S_nth:
-            continue
+        local_S_nth = granule['tangent_height'].shape[0]
+#         if granule['tangent_height'].shape[0] != S_nth:
+#             continue
         for ift in range(D_nft):
             th_idx = np.argsort(granule['tangent_height'][:,ift])# TH has to go from low to high
-            S_latitude[igranule,ift,] = granule['latitude'][th_idx,ift]
-            S_longitude[igranule,ift,] = granule['longitude'][th_idx,ift]
-            S_tangent_height[igranule,ift,] = granule['tangent_height'][th_idx,ift]
-        S_solar_zenith_angle[igranule,] = granule['solar_zenith_angle'].T
-        S_time[igranule,:] = granule['time']
+            S_latitude[igranule,ift,0:local_S_nth] = granule['latitude'][th_idx,ift]
+            S_longitude[igranule,ift,0:local_S_nth] = granule['longitude'][th_idx,ift]
+            S_tangent_height[igranule,ift,0:local_S_nth] = granule['tangent_height'][th_idx,ift]
+        S_solar_zenith_angle[igranule,:,0:local_S_nth] = granule['solar_zenith_angle'].T
+        S_time[igranule,0:local_S_nth] = granule['time']
     for (igranule,granule) in enumerate(S_granules):
-        if granule['tangent_height'].shape[0] != S_nth:
-            continue
+        local_S_nth = granule['tangent_height'].shape[0]
+#         if granule['tangent_height'].shape[0] != S_nth:
+#             continue
         if igranule < control['sigma start along-track (0-based)'] or igranule > control['sigma end along-track (0-based)']:
             continue
         for ift in range(S_nft):
@@ -394,31 +400,31 @@ else:
                                        n_nO2=S_n_nO2,msis_pt=control['if use msis'],time=granule['time'],
                                        latitude=granule['latitude'][:,ift],
                                        longitude=granule['longitude'][:,ift],nO2s_prior_option='constant',
-                                       max_diverging_step=3,max_iter=6)
-                S_nO2s[igranule,ift,result.THMask] = result.params['nO2s_profile'].value
-                S_nO2s_dofs[igranule,ift,result.THMask] = result.params['nO2s_profile'].dofs
-                S_nO2s_e[igranule,ift,result.THMask] = result.params['nO2s_profile'].posterior_error
-                S_T[igranule,ift,result.THMask] = result.params['T_profile'].value
-                S_T_dofs[igranule,ift,result.THMask] = result.params['T_profile'].dofs
-                S_T_e[igranule,ift,result.THMask] = result.params['T_profile'].posterior_error
-                S_nO2_msis[igranule,ift,result.THMask] = result.nO2_profile
+                                       max_diverging_step=4,max_iter=6)
+                S_nO2s[igranule,ift,0:local_S_nth][result.THMask] = result.params['nO2s_profile'].value
+                S_nO2s_dofs[igranule,ift,0:local_S_nth][result.THMask] = result.params['nO2s_profile'].dofs
+                S_nO2s_e[igranule,ift,0:local_S_nth][result.THMask] = result.params['nO2s_profile'].posterior_error
+                S_T[igranule,ift,0:local_S_nth][result.THMask] = result.params['T_profile'].value
+                S_T_dofs[igranule,ift,0:local_S_nth][result.THMask] = result.params['T_profile'].dofs
+                S_T_e[igranule,ift,0:local_S_nth][result.THMask] = result.params['T_profile'].posterior_error
+                S_nO2_msis[igranule,ift,0:local_S_nth][result.THMask] = result.nO2_profile
                 if hasattr(result,'T_profile_msis'):
-                    S_T_msis[igranule,ift,result.THMask] = result.T_profile_msis
+                    S_T_msis[igranule,ift,0:local_S_nth][result.THMask] = result.T_profile_msis
                 if S_n_nO2 > 0:
                     tmp = np.full_like(result.params['nO2s_profile'].value,np.nan)
                     tmp[0:S_n_nO2] = result.params['nO2Scale_profile'].value
-                    S_nO2Scale[igranule,ift,result.THMask] = tmp
+                    S_nO2Scale[igranule,ift,0:local_S_nth][result.THMask] = tmp
                     
                     tmp = np.full_like(result.params['nO2s_profile'].value,np.nan)
                     tmp[0:S_n_nO2] = result.params['nO2Scale_profile'].dofs
-                    S_nO2Scale_dofs[igranule,ift,result.THMask] = tmp
+                    S_nO2Scale_dofs[igranule,ift,0:local_S_nth][result.THMask] = tmp
                     
                     tmp = np.full_like(result.params['nO2s_profile'].value,np.nan)
                     tmp[0:S_n_nO2] = result.params['nO2Scale_profile'].posterior_error
-                    S_nO2Scale_e[igranule,ift,result.THMask] = tmp
+                    S_nO2Scale_e[igranule,ift,0:local_S_nth][result.THMask] = tmp
                     
-                S_tangent_height[igranule,ift,result.THMask] = result.tangent_height
-                S_dZ[igranule,ift,result.THMask] = result.dZ
+                S_tangent_height[igranule,ift,0:local_S_nth][result.THMask] = result.tangent_height
+                S_dZ[igranule,ift,0:local_S_nth][result.THMask] = result.dZ
                 S_HW1E[igranule,ift] = result.params['HW1E'].value
                 S_HW1E_dofs[igranule,ift] = result.params['HW1E'].dofs
                 S_HW1E_e[igranule,ift] = result.params['HW1E'].posterior_error
@@ -433,7 +439,8 @@ else:
                 logging.warning('chi2={:.2f},rmse={:.2E},niter={},if_success={}'.format(result.chi2,result.rmse,result.niter,result.if_success))
                 logging.warning('takes {:.2f} s'.format(time.time()-Time))
             except Exception as e:
-                print(e)
+                logging.warning('sigma granule {}, footprint {} gives error. message:'.format(igranule,ift))
+                logging.warning(e)
                 S_if_success[igranule,ift] = False
 
     logging.warning('singlet sigma takes {:.2f} s'.format(time.time()-Time))
