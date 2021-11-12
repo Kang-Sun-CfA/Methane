@@ -70,11 +70,64 @@ def F_stray_light_input(strayLightKernelPath,rowExtent=400,colExtent=400,
     strayLightKernel[np.ix_(centerRowFilter,centerColFilter)] = 0
     return strayLightKernel
 
+class Merged_Frame(dict):
+    ''' 
+    merged exposures with a range of integration times
+    '''
+    def __init__(self,ISSF_Exposure_list,limits=None):
+        self.logger = logging.getLogger(__name__)
+        if limits is None:
+            limits = np.ones(ISSF_Exposure_list.shape)*5000
+            limits[-1] = 20000
+        # make sure integration time goes from high to low
+        ISSF_Exposure_list = np.array(ISSF_Exposure_list)[np.argsort([expo['int_time'] for expo in ISSF_Exposure_list])][::-1]
+        for (i,(expo,limit)) in enumerate(zip(ISSF_Exposure_list,limits)):
+            tmp_data = np.ma.masked_where(expo['data']>limit, expo['data'])/expo['int_time']
+            if i == 0:
+                tmp_data0 = tmp_data
+            elif i == 1:
+                data = np.ma.where(np.ma.getmask(tmp_data0),tmp_data,tmp_data0)
+            else:
+                data = np.ma.where(np.ma.getmask(data),tmp_data,data)
+        data = data.filled(np.nan)
+        data[data < 0] = np.nan
+        data = data/np.nanmax(data)
+        self.add('data',data)
+        self.add('rows_1based',expo['rows_1based'])
+        self.add('cols_1based',expo['cols_1based'])
+        self.add('wavelength', expo['wavelength'])
+    def add(self,key,value):
+        self.__setitem__(key,value)
+    def plot(self,existing_ax=None,scale='log',**kwargs):
+        if existing_ax is None:
+            self.logger.info('axes not supplied, creating one')
+            fig,ax = plt.subplots(1,1,figsize=(10,5))
+        else:
+            fig = None
+            ax = existing_ax
+        figout = {}
+        figout['fig'] = fig
+        figout['ax'] = ax
+        if scale == 'log':
+            from matplotlib.colors import LogNorm
+            if 'vmin' in kwargs:
+                inputNorm = LogNorm(vmin=kwargs['vmin'],vmax=kwargs['vmax'])
+                kwargs.pop('vmin');
+                kwargs.pop('vmax');
+            else:
+                inputNorm = LogNorm()
+            figout['pc'] = ax.pcolormesh(self['cols_1based'],self['rows_1based'],
+                                         self['data'],shading='auto',norm=inputNorm,
+                                         **kwargs)
+        else:
+            figout['pc'] = ax.pcolormesh(self['cols_1based'],self['rows_1based'],
+                                         self['data'],shading='auto',**kwargs)
+        return figout
 class ISSF_Exposure(dict):
     '''
     Exposure of a single laser wavelength
     '''
-    def __init__(self,wavelength,data,nrow=None,ncol=None,power=None):
+    def __init__(self,wavelength,data,nrow=None,ncol=None,power=None,int_time=None):
         self.logger = logging.getLogger(__name__)
         # self.logger.info('creating an ISSF_Exposure instance')
         if nrow is None:
@@ -95,6 +148,8 @@ class ISSF_Exposure(dict):
         self.add('data', data)
         self.add('power',power)
         self.add('if_power_normalized',False)
+        self.add('int_time',int_time)
+        self.add('if_time_normalized',False)
     def add(self,key,value):
         self.__setitem__(key,value)
     def flip_columns(self):
@@ -110,6 +165,15 @@ class ISSF_Exposure(dict):
             return
         self['data'] = self['data']/self['power']
         self['if_power_normalized']=True
+    def normalize_time(self):
+        if self['if_time_normalized'] == True:
+            self.logger.warning('already normalized by integration time!')
+            return
+        if self['int_time'] is None:
+            self.logger.error('you need to provide an integration time to normalize time!')
+            return
+        self['data'] = self['data']/self['int_time']
+        self['if_time_normalized']=True
     def plot(self,existing_ax=None,scale='log',**kwargs):
         if existing_ax is None:
             self.logger.info('axes not supplied, creating one')
@@ -122,8 +186,14 @@ class ISSF_Exposure(dict):
         figout['ax'] = ax
         if scale == 'log':
             from matplotlib.colors import LogNorm
+            if 'vmin' in kwargs:
+                inputNorm = LogNorm(vmin=kwargs['vmin'],vmax=kwargs['vmax'])
+                kwargs.pop('vmin');
+                kwargs.pop('vmax');
+            else:
+                inputNorm = LogNorm()
             figout['pc'] = ax.pcolormesh(self['cols_1based'],self['rows_1based'],
-                                         self['data'],shading='auto',norm=LogNorm(),
+                                         self['data'],shading='auto',norm=inputNorm,
                                          **kwargs)
         else:
             figout['pc'] = ax.pcolormesh(self['cols_1based'],self['rows_1based'],
