@@ -74,7 +74,7 @@ class Merged_Frame(dict):
     ''' 
     merged exposures with a range of integration times
     '''
-    def __init__(self,ISSF_Exposure_list,limits=None):
+    def __init__(self,ISSF_Exposure_list,limits=None,normalize_peak=True):
         self.logger = logging.getLogger(__name__)
         if limits is None:
             limits = np.ones(ISSF_Exposure_list.shape)*5000
@@ -85,19 +85,58 @@ class Merged_Frame(dict):
             tmp_data = np.ma.masked_where(expo['data']>limit, expo['data'])/expo['int_time']
             if i == 0:
                 tmp_data0 = tmp_data
+                data = tmp_data
             elif i == 1:
                 data = np.ma.where(np.ma.getmask(tmp_data0),tmp_data,tmp_data0)
             else:
                 data = np.ma.where(np.ma.getmask(data),tmp_data,data)
         data = data.filled(np.nan)
-        data[data < 0] = np.nan
-        data = data/np.nanmax(data)
+        #data[data < 0] = np.nan
+        if normalize_peak:
+            data = data/np.nanmax(data)
         self.add('data',data)
+        max_idx=np.unravel_index(np.nanargmax(self['data']),self['data'].shape)
+        max_col_idx = max_idx[1]
+        max_row_idx = max_idx[0]
+        self.add('max_col_idx',max_col_idx)
+        self.add('max_row_idx',max_row_idx)
         self.add('rows_1based',expo['rows_1based'])
         self.add('cols_1based',expo['cols_1based'])
         self.add('wavelength', expo['wavelength'])
+        self.get_spatial_response()
     def add(self,key,value):
         self.__setitem__(key,value)
+    def get_spatial_response(self,spectral_extent=100,normalize_peak=True):
+        col_mask = (self['cols_1based'] >= self['max_col_idx']-spectral_extent) &\
+            (self['cols_1based'] <= self['max_col_idx']+spectral_extent)
+        spatial_response = np.nansum(self['data'][:,col_mask],axis=1)
+        # x = self['rows_1based'][~np.isnan(spatial_response)]
+        # y = spatial_response[~np.isnan(spatial_response)]
+        # spatial_response = spatial_response/np.trapz(y,x)
+        if normalize_peak:
+            spatial_response = spatial_response/np.nanmax(spatial_response)
+        # peak_row_1based = np.trapz(x*y,x)/np.trapz(y,x)
+        self.add('spatial_response',spatial_response)
+        # self.add('peak_row_1based',peak_row_1based)
+    def plot_spatial_response(self,existing_ax=None,scale='log',extent=200):
+        if existing_ax is None:
+            self.logger.info('axes not supplied, creating one')
+            fig,ax = plt.subplots(1,1,figsize=(10,5))
+        else:
+            fig = None
+            ax = existing_ax
+        figout = {}
+        figout['fig'] = fig
+        figout['ax'] = ax
+        
+        if scale == 'log':
+            y = self['spatial_response'].copy()
+            y[y<0]=np.nan
+            figout['plot'] = ax.plot(self['rows_1based'],y)
+            ax.set_yscale('log')
+        else:
+            figout['plot'] = ax.plot(self['rows_1based'],self['spatial_response'])
+        ax.set_xlim((np.max([1,self['max_row_idx']-extent]),np.min([self['max_row_idx']+extent,2048])));
     def plot(self,existing_ax=None,scale='log',**kwargs):
         if existing_ax is None:
             self.logger.info('axes not supplied, creating one')
