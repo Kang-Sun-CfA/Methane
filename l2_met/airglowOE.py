@@ -1903,6 +1903,418 @@ def F_fit_profile(tangent_height,radiance,radiance_error,wavelength,
     result.nO2_profile = nO2_profile
     return result
 
+class Level2(object):
+    def __init__(self,filename):
+        '''
+        open file
+        '''
+        self.logger = logging.getLogger(__name__)
+        self.fid = Dataset(filename)
+        self.ny = self.fid.dimensions['along_track'].size
+        self.nx = self.fid.dimensions['across_track'].size
+        self.nz = self.fid.dimensions['vertical'].size
+        fn=os.path.split(filename)[-1]
+        self.logger.debug('{} has {} along-track positions'.format(fn,self.ny))
+        if self.nx != 8:
+            self.logger.warning('{} has {} across-track positions!'.format(fn,self.nx))
+        if self.nz != 15:
+            self.logger.warning('{} has {} tangent heights!'.format(fn,self.nz))
+    
+    def load_variable(self,load_delta=False,load_sigma=False,
+                      data_fields=None,data_names=None,
+                      mask_downward_lines=False):
+        '''
+        load variables as attributes of the Level2_Reader object
+        '''
+        if data_fields is None or (load_delta and load_sigma):
+            data_fields = ['longitude','latitude','tangent_height','layer_thickness','solar_zenith_angle','time',
+                           'singlet_delta/temperature','singlet_delta/temperature_dofs','singlet_delta/temperature_error',
+                           'singlet_delta/excited_O2','singlet_delta/excited_O2_dofs','singlet_delta/excited_O2_error',
+                           'singlet_sigma/temperature','singlet_sigma/temperature_dofs','singlet_sigma/temperature_error',
+                           'singlet_sigma/excited_O2','singlet_sigma/excited_O2_dofs','singlet_sigma/excited_O2_error']
+            data_names = ['longitude','latitude','tangent_height','layer_thickness','solar_zenith_time','time',
+                           'delta_temperature','delta_temperature_dofs','delta_temperature_error',
+                           'delta_excited_O2','delta_excited_O2_dofs','delta_excited_O2_error',
+                           'sigma_temperature','sigma_temperature_dofs','sigma_temperature_error',
+                           'sigma_excited_O2','sigma_excited_O2_dofs','sigma_excited_O2_error']
+        if load_delta and not load_sigma:
+            data_fields = ['longitude','latitude','tangent_height','layer_thickness','solar_zenith_angle','time',
+                           'singlet_delta/temperature','singlet_delta/temperature_dofs','singlet_delta/temperature_error',
+                           'singlet_delta/excited_O2','singlet_delta/excited_O2_dofs','singlet_delta/excited_O2_error',
+                           'singlet_delta/rmse','singlet_delta/chi2','singlet_delta/if_success']
+        if load_sigma and not load_delta:
+            data_fields = ['longitude','latitude','tangent_height','layer_thickness','solar_zenith_angle','time',
+                           'singlet_sigma/temperature','singlet_sigma/temperature_dofs','singlet_sigma/temperature_error',
+                           'singlet_sigma/excited_O2','singlet_sigma/excited_O2_dofs','singlet_sigma/excited_O2_error',
+                           'singlet_sigma/rmse','singlet_sigma/chi2','singlet_sigma/if_success']
+        if len(data_names) != len(data_fields):
+            data_names = [s.split('/')[-1] for s in data_fields]
+        for (i,f) in enumerate(data_fields):
+            try:
+                setattr(self,data_names[i],self.fid[f][:].filled(np.nan))
+            except:
+                logging.info('{} cannot be filled by nan or is not a masked array'.format(f))
+                setattr(self,data_names[i],self.fid[f][:])
+            if f == 'time':
+                time_data = np.array(self.fid['time'][:],dtype=np.float64)
+                datetime_data = np.ndarray(shape=time_data.shape,dtype=np.object_)
+                for iline in range(time_data.shape[0]):
+                    for ift in range(time_data.shape[1]):
+                        if time_data[iline,ift]<0:
+                            datetime_data[iline,ift] = dt.datetime(1900,1,1)
+                        else:
+                            datetime_data[iline,ift] = dt.datetime(2000,1,1)+dt.timedelta(seconds=time_data[iline,ift])
+                setattr(self,'datetime',datetime_data)
+        if mask_downward_lines:
+            maxline = np.nanargmax(self.latitude[:,3,7])
+            minline = np.nanargmin(self.latitude[:,3,7])
+            self.if_success[0:maxline,] = False
+            self.if_success[minline:,] = False
+        self.pairs = [[0,7],[1,6],[2,5],[3,4]]
+        if self.ny > 10:
+            xdistances = [F_distance(self.longitude[10,0,7],self.latitude[10,0,7],
+                                     self.longitude[10,i,7],self.latitude[10,i,7]) for i in range(1,self.nx)]
+            self.xdistances = xdistances
+            if np.nanargmin(xdistances) != 6:
+                self.logger.warning('xcross track 0 seems to match {}'.format(np.nanargmin(xdistances)+1))
+                self.pairs = [[0,5],[1,4],[2,3],[6,7]]
+                
+    def get_O2s_column(self):
+#         if self.nx != 8:
+#             self.logger.error('won''t work')# it works actually
+        O2s_column = np.full((self.ny,4),np.nan)
+        for iy in range(self.ny):
+            for (ipair,pair) in enumerate(self.pairs):
+                ydata = np.hstack((self.excited_O2[iy,pair[0],:],self.excited_O2[iy,pair[1],:]))
+                xdata = np.hstack((self.tangent_height[iy,pair[0],:],self.tangent_height[iy,pair[1],:]))
+                mask = ~np.isnan(ydata)
+                xdata = xdata[mask]
+                ydata = ydata[mask]
+                idx = np.argsort(xdata)
+                xdata = np.sort(xdata)
+                ydata = ydata[idx]
+                O2s_column[iy,ipair] = np.trapz(ydata,xdata)*1e5#molec/cm2
+        self.O2s_column = O2s_column
+    
+    def convert_to_paired_3D(self,field_name,level=7,if_return=False):
+        '''
+        field_name should be excited_O2 or temperature
+        '''
+        tmpd = {}
+        tmpd[field_name] = np.full((self.ny,4,self.nz*2),np.nan)
+        tmpd[field_name+'_error'] = np.full((self.ny,4,self.nz*2),np.nan)
+        tmpd[field_name+'_dofs'] = np.full((self.ny,4,self.nz*2),np.nan)
+        if not hasattr(self,'paired_tangent_height'):
+            self.paired_tangent_height = np.full((self.ny,4,self.nz*2),np.nan)
+            save_th = True
+        else:
+            save_th = False
+        for iy in range(self.ny):
+            for (ipair,pair) in enumerate(self.pairs):
+                ydata = np.hstack((getattr(self,field_name)[iy,pair[0],:],getattr(self,field_name)[iy,pair[1],:]))
+                ydatae = np.hstack((getattr(self,field_name+'_error')[iy,pair[0],:],
+                                    getattr(self,field_name+'_error')[iy,pair[1],:]))
+                ydatad = np.hstack((getattr(self,field_name+'_dofs')[iy,pair[0],:],
+                                    getattr(self,field_name+'_dofs')[iy,pair[1],:]))
+                xdata = np.hstack((self.tangent_height[iy,pair[0],:],self.tangent_height[iy,pair[1],:]))
+                idx = np.argsort(xdata)
+                xdata = np.sort(xdata)
+                ydata = ydata[idx]
+                ydatae = ydatae[idx]
+                ydatad = ydatad[idx]
+                if save_th:
+                    self.paired_tangent_height[iy,ipair,:] = xdata
+                tmpd[field_name][iy,ipair,:] = ydata
+                tmpd[field_name+'_error'][iy,ipair,:] = ydatae
+                tmpd[field_name+'_dofs'][iy,ipair,:] = ydatad
+        if if_return:
+            return tmpd
+        else:
+            setattr(self,'paired_'+field_name,tmpd[field_name])
+            setattr(self,'paired_'+field_name+'_error',tmpd[field_name+'_error'])
+            setattr(self,'paired_'+field_name+'_dofs',tmpd[field_name+'_dofs'])
+        
+    def convert_to_paired_2D(self,field_name,level=7):
+        data = getattr(self,field_name).copy()
+        if data.ndim == 3:
+            data = data[...,level]
+        if field_name == 'if_success':
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", category=RuntimeWarning)
+                paired_data = np.hstack([np.nanmin(data[:,pair],axis=1)[:,np.newaxis] 
+                                         for pair in self.pairs])
+        elif field_name == 'longitude':
+            def F_squeeze_lon(lon):
+                '''
+                deal with +/-180 discontinuity
+                '''
+                outp = np.full(lon.shape[0],np.nan)
+                for (ipair,pair) in enumerate(lon):
+                    if pair[0]*pair[1] < 0:
+                        tmp = np.mean([pair[pair<0]+360,pair[pair>0]])
+                        if tmp > 180:
+                            tmp = tmp-180
+                        outp[ipair] = tmp
+                    else:
+                        outp[ipair] = np.nanmean(pair)
+                return outp
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", category=RuntimeWarning)
+                paired_data = np.hstack([F_squeeze_lon(data[:,pair])[:,np.newaxis] 
+                                         for pair in self.pairs])
+        else:
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", category=RuntimeWarning)
+                paired_data = np.hstack([np.nanmean(data[:,pair],axis=1)[:,np.newaxis] 
+                                         for pair in self.pairs])
+        return paired_data
+    
+    def plot(self,plot_field='O2s_column',if_pair=True,ax=None,level=7,valid_mask=None,
+             **kwargs):
+        import cartopy.crs as ccrs
+        import cartopy.feature as cfeature
+        if ax is None:
+            self.logger.info('axes not supplied, creating one')
+            fig,ax = plt.subplots(1,1,figsize=(10,5),
+                                  subplot_kw={"projection": ccrs.PlateCarree()})
+            ax.add_feature(cfeature.COASTLINE)
+            ax.add_feature(cfeature.BORDERS)
+        else:
+            fig = None
+        if plot_field=='O2s_column':
+            if_pair=True
+            if not hasattr(self,'O2s_column'):
+                self.get_O2s_column()
+            plot_data = self.O2s_column
+        if if_pair:
+#             lon = self.longitude[:,0:4,level];lat = self.latitude[:,0:4,level]
+            lon = self.convert_to_paired_2D('longitude')
+            lat = self.convert_to_paired_2D('latitude')
+            if plot_field!='O2s_column':
+                plot_data = self.convert_to_paired_2D(plot_field,level)
+        else:
+            lon = self.longitude[:,:,level];lat = self.latitude[:,:,level]
+            plot_data = getattr(self,plot_field)
+        
+        mask = ~np.isnan(plot_data)
+        if valid_mask is not None:
+            mask = mask & valid_mask
+        sc = ax.scatter(lon[mask],lat[mask],c=plot_data[mask],**kwargs)
+        ax.set_extent([-180,180,-90,90])
+        figout = {}
+        figout['fig'] = fig
+        figout['ax'] = ax
+        figout['sc'] = sc
+        return figout
+    
+    def close(self):
+        self.fid.close()
+
+class Level3(object):
+    def __init__(self,west=-180.,east=180.,south=-90.,north=90.,
+                 grid_size=1,grid_sizex=None,grid_sizey=None,
+                 lower_z=60.,upper_z=120.,dz=5,
+                 start_year=2004,start_month=1,start_day=1,
+                 end_year=2012,end_month=12,end_day=None):
+        '''
+        initialize properties
+        '''
+        if end_day is None:
+            end_day = monthrange(end_year,end_month)[-1]
+        self.logger = logging.getLogger(__name__)
+        if grid_sizex is None:
+            grid_sizex = grid_size
+            grid_sizey = grid_size
+        else:
+            grid_size = None
+        self.grid_size = grid_size
+        self.grid_sizex = grid_sizex
+        self.grid_sizey = grid_sizey
+        self.start_datetime = dt.datetime(start_year,start_month,start_day,0,0,0)
+        self.end_datetime = dt.datetime(end_year,end_month,end_day,23,59,59)
+        self.xgrid = arange_(west+grid_sizex/2,east,grid_sizex)
+        self.ygrid = arange_(south+grid_sizey/2,north,grid_sizey)
+        self.xgridr = np.append(self.xgrid-grid_sizex/2,self.xgrid[-1]+grid_sizex/2)#arange_(west,east,grid_sizex)
+        self.ygridr = np.append(self.ygrid-grid_sizey/2,self.ygrid[-1]+grid_sizey/2)#arange_(south,north,grid_sizey)
+        self.zgrid = arange_(lower_z+dz/2,upper_z,dz)
+        self.zgridr = np.append(self.zgrid-dz/2,self.zgrid[-1]+dz/2)#arange_(lower_z,upper_z,dz)
+        self.nlon = len(self.xgrid)
+        self.nlat = len(self.ygrid)
+        self.nz = len(self.zgrid)
+        self.dz = dz
+    
+    def drop_in_the_box_3D(self,l2_obj,field_name,error_field_name=None,min_dofs=0.5,valid_mask=None,level=7):
+        '''
+        field_name should be excited_O2 or temperature
+        '''
+        data = getattr(l2_obj,field_name)
+        dofs_data = getattr(l2_obj,field_name+'_dofs')
+        if error_field_name is not None:
+            edata = getattr(l2_obj,error_field_name)
+        else:
+            edata = np.ones_like(data)
+        time_mask = np.array([(d >= self.start_datetime) & (d <= self.end_datetime) for d in l2_obj.datetime[:,level]])
+        time_mask = np.tile(time_mask[:,np.newaxis],[1,data.shape[1]])
+        if valid_mask is None:
+            valid_mask = time_mask
+        else:
+            valid_mask = valid_mask & time_mask
+        valid_mask_3D = np.ones(data.shape,dtype=bool)
+        for iz in range(valid_mask_3D.shape[2]):
+            valid_mask_3D[:,:,iz] = valid_mask & (dofs_data[:,:,iz] >= min_dofs)
+        if np.nansum(valid_mask) == 0:
+            self.logger.info('no match data')
+            return
+        if not hasattr(self,'A'):
+            self.A = np.zeros((self.nlat,self.nlon,self.nz),dtype=np.float32)
+            self.B = np.zeros((self.nlat,self.nlon,self.nz),dtype=np.float32)
+            self.D = np.zeros((self.nlat,self.nlon,self.nz),dtype=np.int32)
+            
+        if data.shape[1] == 4:
+            lon = l2_obj.convert_to_paired_2D('longitude',level=level)
+            lat = l2_obj.convert_to_paired_2D('latitude',level=level)
+            th = l2_obj.paired_tangent_height
+        else:
+            lon = l2_obj.longitude[...,level]
+            lat = l2_obj.latitude[...,level]
+            th = l2_obj.tangent_height
+        for iline in range(data.shape[0]):
+            for ift in range(data.shape[1]):
+                if (lat[iline,ift] < self.ygridr.min()) or (lat[iline,ift] > self.ygridr.max()) or\
+                        (lon[iline,ift] < self.xgridr.min()) or (lon[iline,ift] > self.xgridr.max()):
+                    continue
+                lat_idx = np.argmin(np.abs(self.ygrid-lat[iline,ift]))
+                lon_idx = np.argmin(np.abs(self.xgrid-lon[iline,ift]))
+                for ith in range(data.shape[2]):
+                    if not valid_mask_3D[iline,ift,ith]:
+                        continue
+                    if (th[iline,ift,ith] < self.zgridr.min()) or (th[iline,ift,ith] > self.zgridr.max()):
+                        continue
+                    if np.isnan(data[iline,ift,ith]):continue
+                    z_idx = np.argmin(np.abs(self.zgrid-th[iline,ift,ith]))
+                    self.A[lat_idx,lon_idx,z_idx] = np.nansum([self.A[lat_idx,lon_idx,z_idx],
+                                                               data[iline,ift,ith]*edata[iline,ift,ith]])
+                    self.B[lat_idx,lon_idx,z_idx] = np.nansum([self.B[lat_idx,lon_idx,z_idx],edata[iline,ift,ith]])
+                    self.D[lat_idx,lon_idx,z_idx] = self.D[lat_idx,lon_idx,z_idx]+1
+        setattr(self,field_name,self.A/self.B)
+    
+    def squeeze_3D(self,axis=1):
+        aa = np.nansum(self.A,axis=axis)
+        bb = np.nansum(self.B,axis=axis)
+        dd = np.nansum(self.D,axis=axis)
+        return {'squeezed_A':aa,'squeezed_B':bb,'squeezed_D':dd}
+    def drop_in_the_box(self,l2_obj,field_name,error_field_name=None,valid_mask=None,level=7):
+        data = getattr(l2_obj,field_name)
+        if error_field_name is not None:
+            edata = getattr(l2_obj,error_field_name)
+        else:
+            edata = np.ones_like(data)
+        time_mask = np.array([(d >= self.start_datetime) & (d <= self.end_datetime) for d in l2_obj.datetime[:,level]])
+        time_mask = np.tile(time_mask[:,np.newaxis],[1,data.shape[1]])
+        if valid_mask is None:
+            valid_mask = time_mask
+        else:
+            valid_mask = valid_mask & time_mask
+        if np.nansum(valid_mask) == 0:
+            self.logger.info('no match data')
+            return
+        if data.ndim == 2:
+#             self.logger.info('2d regridding using {}'.format(field_name))
+            if not hasattr(self,'A'):
+                self.A = np.zeros((self.nlat,self.nlon),dtype=np.float32)
+                self.B = np.zeros((self.nlat,self.nlon),dtype=np.float32)
+                self.D = np.zeros((self.nlat,self.nlon),dtype=np.int32)
+        elif data.ndim == 3:
+            self.logger.error('not supported yet');return
+            self.logger.info('3d regridding using {}'.format(field_name))
+            A = np.zeros((self.nlat,self.nlon,self.nz),dtype=np.float32)
+            B = np.zeros((self.nlat,self.nlon,self.nz),dtype=np.float32)
+            D = np.zeros((self.nlat,self.nlon,self.nz),dtype=np.int32)
+        else:
+            self.logger.error('should not happen');return
+        if data.shape[1] == 4:
+            lon = l2_obj.convert_to_paired_2D('longitude',level=level)
+            lat = l2_obj.convert_to_paired_2D('latitude',level=level)
+        else:
+            lon = l2_obj.longitude[...,level]
+            lat = l2_obj.latitude[...,level]
+        if data.ndim == 2:
+            for iline in range(lon.shape[0]):
+                for ift in range(lon.shape[1]):
+                    if not valid_mask[iline,ift]:
+                        continue
+                    if (lat[iline,ift] < self.ygridr.min()) or (lat[iline,ift] > self.ygridr.max()) or\
+                        (lon[iline,ift] < self.xgridr.min()) or (lon[iline,ift] > self.xgridr.max()):
+                            continue
+                    lat_idx = np.argmin(np.abs(self.ygrid-lat[iline,ift]))
+                    lon_idx = np.argmin(np.abs(self.xgrid-lon[iline,ift]))
+                    self.A[lat_idx,lon_idx] = np.nansum([self.A[lat_idx,lon_idx],data[iline,ift]*edata[iline,ift]])
+                    self.B[lat_idx,lon_idx] = np.nansum([self.B[lat_idx,lon_idx],edata[iline,ift]])
+                    self.D[lat_idx,lon_idx] = self.D[lat_idx,lon_idx]+1
+        setattr(self,field_name,self.A/self.B)
+    
+    def plot_curtain(self,ax=None,scale='log',plot_D=False,use_edge=True,**kwargs):
+        import cartopy.crs as ccrs
+        import cartopy.feature as cfeature
+        if ax is None:
+            self.logger.info('axes not supplied, creating one')
+            fig,ax = plt.subplots(1,1,figsize=(10,5))
+        else:
+            fig = None
+        d = self.squeeze_3D(axis=1)
+        if plot_D:
+            data = d['squeezed_D']
+            scale='linear'
+        else:
+            data = d['squeezed_A']/d['squeezed_B']
+        figout = {}
+        figout['fig'] = fig
+        figout['ax'] = ax
+        if use_edge:
+            yy = self.ygridr
+            zz = self.zgridr
+        else:
+            yy = self.ygrid
+            zz = self.zgrid
+        if scale == 'log':
+            from matplotlib.colors import LogNorm
+            if 'vmin' in kwargs:
+                inputNorm = LogNorm(vmin=kwargs['vmin'],vmax=kwargs['vmax'])
+                kwargs.pop('vmin');
+                kwargs.pop('vmax');
+            else:
+                inputNorm = LogNorm()
+            figout['pc'] = ax.pcolormesh(yy,zz,
+                                         data.T,norm=inputNorm,
+                                         **kwargs)
+        else:
+            figout['pc'] = ax.pcolormesh(yy,zz,
+                                         data.T,**kwargs)
+        return figout
+    
+    def plot(self,plot_field,ax=None,iz=0,**kwargs):
+        import cartopy.crs as ccrs
+        import cartopy.feature as cfeature
+        if ax is None:
+            self.logger.info('axes not supplied, creating one')
+            fig,ax = plt.subplots(1,1,figsize=(10,5),
+                                  subplot_kw={"projection": ccrs.PlateCarree()})
+            ax.add_feature(cfeature.COASTLINE)
+            ax.add_feature(cfeature.BORDERS)
+        else:
+            fig = None
+        data = getattr(self,plot_field).copy()
+        if data.ndim == 3:
+            data = data[:,:,iz]
+        pc = ax.pcolormesh(self.xgrid,self.ygrid,data,**kwargs)
+        ax.set_extent([-180,180,-90,90])
+        figout = {}
+        figout['fig'] = fig
+        figout['ax'] = ax
+        figout['pc'] = pc
+        return figout
+
+
 class Level2_Reader(object):
     def __init__(self,filename):
         '''
