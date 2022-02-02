@@ -30,6 +30,12 @@ def arange_(lower,upper,step,dtype=None):
         npnt += 1    
     return np.linspace(lower,upper_new,int(npnt),dtype=dtype)
 
+def F_center_of_mass(xx,yy):
+    mask = (~np.isnan(xx)) & (~np.isnan(yy))
+    xx = xx[mask]
+    yy = yy[mask]
+    return np.trapz(xx*yy,xx)/np.trapz(yy,xx)
+
 def F_peak_width(isrfx,isrfy,percent=0.5):
     if all(np.isnan(isrfy)):
         return np.nan
@@ -106,6 +112,43 @@ class Merged_Frame(dict):
         self.get_spatial_response()
     def add(self,key,value):
         self.__setitem__(key,value)
+    def get_spectral_response(self,spectral_extent=20,spatial_extent=100,
+                              normalize_peak=True):
+        col_mask = (self['cols_1based'] >= self['max_col_idx']-spectral_extent) &\
+            (self['cols_1based'] <= self['max_col_idx']+spectral_extent)
+        row_mask = (self['rows_1based'] >= self['max_row_idx']-spatial_extent) &\
+            (self['rows_1based'] <= self['max_row_idx']+spatial_extent)
+        spectral_response = np.nansum(self['data'][np.ix_(row_mask,col_mask)],axis=0)
+        x = self['cols_1based'][col_mask][~np.isnan(spectral_response)]
+        y = spectral_response[~np.isnan(spectral_response)]
+        spectral_response = spectral_response/np.trapz(y,x)
+        sp = np.full(len(self['cols_1based']),np.nan)
+        sp[col_mask] = spectral_response
+        if normalize_peak:
+            spectral_response = spectral_response/np.nanmax(spectral_response)
+        peak_col_1based = np.trapz(x*y,x)/np.trapz(y,x)
+        self.add('spectral_response',sp)
+        self.add('peak_col_1based',peak_col_1based)
+        
+    def plot_spectral_response(self,existing_ax=None,scale='log',extent=200):
+        if existing_ax is None:
+            self.logger.info('axes not supplied, creating one')
+            fig,ax = plt.subplots(1,1,figsize=(10,5))
+        else:
+            fig = None
+            ax = existing_ax
+        figout = {}
+        figout['fig'] = fig
+        figout['ax'] = ax
+        
+        if scale == 'log':
+            y = self['spectral_response'].copy()
+            y[y<0]=np.nan
+            figout['plot'] = ax.plot(self['cols_1based'],y)
+            ax.set_yscale('log')
+        else:
+            figout['plot'] = ax.plot(self['cols_1based'],self['spectral_response'])
+        ax.set_xlim((np.max([1,self['max_col_idx']-extent]),np.min([self['max_col_idx']+extent,2048])));
     def get_spatial_response(self,spectral_extent=100,normalize_peak=True):
         col_mask = (self['cols_1based'] >= self['max_col_idx']-spectral_extent) &\
             (self['cols_1based'] <= self['max_col_idx']+spectral_extent)
