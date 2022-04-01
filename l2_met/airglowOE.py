@@ -1940,13 +1940,17 @@ class Level2(object):
         if load_delta and not load_sigma:
             data_fields = ['longitude','latitude','tangent_height','layer_thickness','solar_zenith_angle','time',
                            'singlet_delta/temperature','singlet_delta/temperature_dofs','singlet_delta/temperature_error',
+                           'singlet_delta/temperature_msis',
                            'singlet_delta/excited_O2','singlet_delta/excited_O2_dofs','singlet_delta/excited_O2_error',
-                           'singlet_delta/rmse','singlet_delta/chi2','singlet_delta/if_success']
+                           'singlet_delta/O2_scaling','singlet_delta/O2_scaling_dofs','singlet_delta/O2_scaling_error',
+                           'singlet_delta/rmse','singlet_delta/chi2','singlet_delta/if_success','singlet_delta/number_of_iterations']
         if load_sigma and not load_delta:
             data_fields = ['longitude','latitude','tangent_height','layer_thickness','solar_zenith_angle','time',
                            'singlet_sigma/temperature','singlet_sigma/temperature_dofs','singlet_sigma/temperature_error',
+                           'singlet_sigma/temperature_msis',
                            'singlet_sigma/excited_O2','singlet_sigma/excited_O2_dofs','singlet_sigma/excited_O2_error',
-                           'singlet_sigma/rmse','singlet_sigma/chi2','singlet_sigma/if_success']
+                           'singlet_sigma/O2_scaling','singlet_sigma/O2_scaling_dofs','singlet_sigma/O2_scaling_error',
+                           'singlet_sigma/rmse','singlet_sigma/chi2','singlet_sigma/if_success','singlet_sigma/number_of_iterations']
         if len(data_names) != len(data_fields):
             data_names = [s.split('/')[-1] for s in data_fields]
         for (i,f) in enumerate(data_fields):
@@ -1976,8 +1980,14 @@ class Level2(object):
                                      self.longitude[10,i,7],self.latitude[10,i,7]) for i in range(1,self.nx)]
             self.xdistances = xdistances
             if np.nanargmin(xdistances) != 6:
-                self.logger.warning('xcross track 0 seems to match {}'.format(np.nanargmin(xdistances)+1))
-                self.pairs = [[0,5],[1,4],[2,3],[6,7]]
+                if np.nanargmin(xdistances) == 4:
+                    self.logger.warning('xcross track 0 seems to match {}'.format(np.nanargmin(xdistances)+1))
+                    self.pairs = [[0,5],[1,4],[2,3],[6,7]]
+                elif np.nanargmin(xdistances) == 2:
+                    self.logger.warning('xcross track 0 seems to match {}'.format(np.nanargmin(xdistances)+1))
+                    self.pairs = [[0,3],[1,2],[4,7],[5,6]]
+                else:
+                    self.logger.warning('!!!UNCAUGHT!!!xcross track 0 seems to match {}'.format(np.nanargmin(xdistances)+1))
                 
     def get_O2s_column(self):
 #         if self.nx != 8:
@@ -1996,14 +2006,15 @@ class Level2(object):
                 O2s_column[iy,ipair] = np.trapz(ydata,xdata)*1e5#molec/cm2
         self.O2s_column = O2s_column
     
-    def convert_to_paired_3D(self,field_name,level=7,if_return=False):
+    def convert_to_paired_3D(self,field_name,level=7,if_return=False,if_include_error_dofs=True):
         '''
         field_name should be excited_O2 or temperature
         '''
         tmpd = {}
         tmpd[field_name] = np.full((self.ny,4,self.nz*2),np.nan)
-        tmpd[field_name+'_error'] = np.full((self.ny,4,self.nz*2),np.nan)
-        tmpd[field_name+'_dofs'] = np.full((self.ny,4,self.nz*2),np.nan)
+        if if_include_error_dofs:
+            tmpd[field_name+'_error'] = np.full((self.ny,4,self.nz*2),np.nan)
+            tmpd[field_name+'_dofs'] = np.full((self.ny,4,self.nz*2),np.nan)
         if not hasattr(self,'paired_tangent_height'):
             self.paired_tangent_height = np.full((self.ny,4,self.nz*2),np.nan)
             save_th = True
@@ -2012,27 +2023,31 @@ class Level2(object):
         for iy in range(self.ny):
             for (ipair,pair) in enumerate(self.pairs):
                 ydata = np.hstack((getattr(self,field_name)[iy,pair[0],:],getattr(self,field_name)[iy,pair[1],:]))
-                ydatae = np.hstack((getattr(self,field_name+'_error')[iy,pair[0],:],
-                                    getattr(self,field_name+'_error')[iy,pair[1],:]))
-                ydatad = np.hstack((getattr(self,field_name+'_dofs')[iy,pair[0],:],
-                                    getattr(self,field_name+'_dofs')[iy,pair[1],:]))
+                if if_include_error_dofs:
+                    ydatae = np.hstack((getattr(self,field_name+'_error')[iy,pair[0],:],
+                                        getattr(self,field_name+'_error')[iy,pair[1],:]))
+                    ydatad = np.hstack((getattr(self,field_name+'_dofs')[iy,pair[0],:],
+                                        getattr(self,field_name+'_dofs')[iy,pair[1],:]))
                 xdata = np.hstack((self.tangent_height[iy,pair[0],:],self.tangent_height[iy,pair[1],:]))
                 idx = np.argsort(xdata)
                 xdata = np.sort(xdata)
                 ydata = ydata[idx]
-                ydatae = ydatae[idx]
-                ydatad = ydatad[idx]
+                if if_include_error_dofs:
+                    ydatae = ydatae[idx]
+                    ydatad = ydatad[idx]
                 if save_th:
                     self.paired_tangent_height[iy,ipair,:] = xdata
                 tmpd[field_name][iy,ipair,:] = ydata
-                tmpd[field_name+'_error'][iy,ipair,:] = ydatae
-                tmpd[field_name+'_dofs'][iy,ipair,:] = ydatad
+                if if_include_error_dofs:
+                    tmpd[field_name+'_error'][iy,ipair,:] = ydatae
+                    tmpd[field_name+'_dofs'][iy,ipair,:] = ydatad
         if if_return:
             return tmpd
         else:
             setattr(self,'paired_'+field_name,tmpd[field_name])
-            setattr(self,'paired_'+field_name+'_error',tmpd[field_name+'_error'])
-            setattr(self,'paired_'+field_name+'_dofs',tmpd[field_name+'_dofs'])
+            if if_include_error_dofs:
+                setattr(self,'paired_'+field_name+'_error',tmpd[field_name+'_error'])
+                setattr(self,'paired_'+field_name+'_dofs',tmpd[field_name+'_dofs'])
         
     def convert_to_paired_2D(self,field_name,level=7):
         data = getattr(self,field_name).copy()
@@ -2143,12 +2158,20 @@ class Level3(object):
         self.nz = len(self.zgrid)
         self.dz = dz
     
-    def drop_in_the_box_3D(self,l2_obj,field_name,error_field_name=None,min_dofs=0.5,valid_mask=None,level=7):
+    def drop_in_the_box_3D(self,l2_obj,field_name,error_field_name=None,
+                           dofs_field_name='infer',min_dofs=0.5,valid_mask=None,level=7):
         '''
-        field_name should be excited_O2 or temperature
+        field_name should be a 3D field
         '''
         data = getattr(l2_obj,field_name)
-        dofs_data = getattr(l2_obj,field_name+'_dofs')
+          
+        if dofs_field_name == 'infer':
+            if 'dofs' in field_name:
+                dofs_data = data
+            else:
+                dofs_data = getattr(l2_obj,field_name+'_dofs')
+        else:
+            dofs_data = getattr(l2_obj,dofs_field_name)
         if error_field_name is not None:
             edata = getattr(l2_obj,error_field_name)
         else:
