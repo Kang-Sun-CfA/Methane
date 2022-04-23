@@ -18,6 +18,7 @@ from scipy.ndimage import median_filter
 from scipy.signal import peak_widths
 from netCDF4 import Dataset
 import datetime as dt
+from astropy.convolution import convolve_fft
 
 # In this "robust" version of arange the grid doesn't suffer 
 # from the shift of the nodes due to error accumulation.
@@ -44,6 +45,19 @@ def F_peak_width(isrfx,isrfy,percent=0.5):
     result = peak_widths(isrfy,peaks,rel_height=percent)
     dx = np.abs(np.nanmean(np.diff(isrfx)))
     return (result[0]*dx).squeeze()
+
+def F_center2edge(lon,lat):
+    '''
+    function to shut up complain of pcolormesh like 
+    MatplotlibDeprecationWarning: shading='flat' when X and Y have the same dimensions as C is deprecated since 3.3.
+    create grid edges from grid centers
+    '''
+    res=np.mean(np.diff(lon))
+    lonr = np.append(lon-res/2,lon[-1]+res/2)
+    res=np.mean(np.diff(lat))
+    latr = np.append(lat-res/2,lat[-1]+res/2)
+    return lonr,latr
+
 def F_stray_light_input(strayLightKernelPath,rowExtent=400,colExtent=400,
                         rowCenterMask=5,colCenterMask=7):
     """
@@ -198,17 +212,46 @@ class Merged_Frame(dict):
                 kwargs.pop('vmax');
             else:
                 inputNorm = LogNorm()
-            figout['pc'] = ax.pcolormesh(self['cols_1based'],self['rows_1based'],
-                                         self['data'],shading='auto',norm=inputNorm,
+            figout['pc'] = ax.pcolormesh(*F_center2edge(self['cols_1based'],self['rows_1based']),
+                                         self['data'],norm=inputNorm,
                                          **kwargs)
         else:
-            figout['pc'] = ax.pcolormesh(self['cols_1based'],self['rows_1based'],
-                                         self['data'],shading='auto',**kwargs)
+            figout['pc'] = ax.pcolormesh(*F_center2edge(self['cols_1based'],self['rows_1based']),
+                                         self['data'],**kwargs)
         return figout
+
 class ISSF_Exposure(dict):
-    '''
-    Exposure of a single laser wavelength
-    '''
+    """Exposure of a single laser wavelength
+    
+    Represents a single frame of the 2D detector array. It is a customized class based on dictionary
+    
+    Items:
+        nrow: number of rows of the frame.
+        ncol: number of columns of the frame.
+        rows_1based: an integer array starting from 1 as the index of rows.
+        cols_1based: an integer array starting from 1 as the index of columns.
+        wavelength: float number indicating the laser wavelength in nm for this exposure.
+        power: laser power in linear unit (usually mW) for this exposure, remember to convert from dB.
+        int_time: integration time for the exposure, ms and s are OK but need to be consistent.
+        if_power_normalized: boolean to indicate if power has been normalized (True) to avoid duplication.
+        if_time_normalized: boolean to indicate if int_time has been normalized (True) to avoid duplication.
+        data: 2D float array with shape nrow by ncol for the detector data.
+        
+    Methods:
+        __init__: initializes instance and key attributes.
+        add: adds attributes.
+        flip_columns: flips columns of data. We want the column index to increase with wavelength.
+        flip_rows: flips rows. Useful for MethaneAIR.
+        running_average_rows: 
+            replaces columns near the exposure x all rows with running average. Only use
+            it for ISRF data, not straylight data.
+        normalize_power: divides data by power.
+        normalize_time: divides data by int_time.
+        plot: plots the data as 2D pcolormesh.
+        remove_straylight: 
+            removes straylight from the data array. More work is needed for MethaneSAT straylight correction.
+        
+    """
     def __init__(self,wavelength,data,nrow=None,ncol=None,power=None,int_time=None):
         self.logger = logging.getLogger(__name__)
         # self.logger.info('creating an ISSF_Exposure instance')
@@ -238,6 +281,21 @@ class ISSF_Exposure(dict):
         self['data'] = self['data'][:,::-1]
     def flip_rows(self):
         self['data'] = self['data'][::-1,:]
+    def running_average_rows(self,window_size,col_extent=20):
+        '''
+        using astropy convolution function to running-average across rows. assuming boxcar kernel
+        '''
+        if col_extent is None:
+            self['data'] = convolve_fft(self['data'],
+                                        np.ones((window_size,1)),
+                                        normalize_kernel=True)
+        else:
+            max_col = self['cols_1based'][np.argmax(np.nansum(self['data'],axis=0))]
+            self.logger.info('Running averaging is limited to {}+/-{}'.format(max_col,col_extent))
+            col_mask = (self['cols_1based'] >= max_col-col_extent) & (self['cols_1based'] <= max_col+col_extent)
+            self['data'][:,col_mask] = convolve_fft(self['data'][:,col_mask],
+                                                    np.ones((window_size,1)),
+                                                    normalize_kernel=True)
     def normalize_power(self):
         if self['if_power_normalized'] == True:
             self.logger.warning('already normalized by power!')
@@ -274,18 +332,18 @@ class ISSF_Exposure(dict):
                 kwargs.pop('vmax');
             else:
                 inputNorm = LogNorm()
-            figout['pc'] = ax.pcolormesh(self['cols_1based'],self['rows_1based'],
-                                         self['data'],shading='auto',norm=inputNorm,
+            figout['pc'] = ax.pcolormesh(*F_center2edge(self['cols_1based'],self['rows_1based']),
+                                         self['data'],norm=inputNorm,
                                          **kwargs)
         else:
-            figout['pc'] = ax.pcolormesh(self['cols_1based'],self['rows_1based'],
-                                         self['data'],shading='auto',**kwargs)
+            figout['pc'] = ax.pcolormesh(*F_center2edge(self['cols_1based'],self['rows_1based']),
+                                         self['data'],**kwargs)
         return figout
     def remove_straylight(self,K_far,sum_K_far=None,n_iter=3):
         if K_far is None:
             self.logger.warning('kernel not provided, return')
             return
-        from astropy.convolution import convolve_fft
+        
         if sum_K_far is None:
             sum_K_far = np.nansum(K_far)
         new_data = self['data'].copy()
