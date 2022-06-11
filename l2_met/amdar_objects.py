@@ -224,7 +224,7 @@ class amdar(object):
             map_utc_datenum = np.zeros((nhour,nlon))
             for ilon in range(nlon):
                 map_utc_datenum[:,ilon] = (amdar_local_hours+amdar_lag_hour[0]-\
-                               np.round(nc_out['longitude'][ilon]/15))/24.\
+                               nc_out['longitude'][ilon]/15)/24.\
                                +DATE.toordinal()+366.
             for ihour in range(nhour):
                 utc_mesh = np.tile(map_utc_datenum[ihour,:].squeeze(),(nlat,1))
