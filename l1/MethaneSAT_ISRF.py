@@ -358,7 +358,7 @@ class Central_Wavelength(list):
     each element should be an ISSF_Exposure object
     '''
     def __init__(self,central_wavelength,
-                 delta_wavelength_range=[-0.1,0.1],
+                 delta_wavelength_range=None,
                  instrum=None):
         self.logger = logging.getLogger(__name__)
         self.central_wavelength = central_wavelength
@@ -380,6 +380,36 @@ class Central_Wavelength(list):
         self.nrow = nrow
         self.ncol = ncol
     
+    def read_jf_nc(self,nc_fn,micro_window=None,micro_step=1):
+        '''read nc files from Jonathan Franklin
+        micro_window:
+            window size in nm to subset the wavelength micro steps
+        micro_step:
+            if thinning the micro steps
+        '''
+        self.logger.info('loading {}'.format(nc_fn))
+        nc = Dataset(nc_fn,'r')
+        w = nc['Wavelength'][:]
+        if self.central_wavelength < w.min() or self.central_wavelength > w.max():
+            self.logger.error('central wavelength at {}, not compatible with file wavelength {}-{}'.format(self.central_wavelength,w.min(),w.max()))
+        if micro_window is not None:
+            wmask = (w>=self.central_wavelength-micro_window/2)&(w<=self.central_wavelength+micro_window/2)
+        else:
+            wmask = np.ones(len(w),dtype=bool)
+        stepmask = np.zeros(len(w),dtype=bool)
+        stepmask[::micro_step] = True
+        wmask = wmask & stepmask
+        if np.sum(wmask) < len(w):
+            self.logger.warning('{} wavelengths will be reduced to {}'.format(len(w),np.sum(wmask)))
+        for idx in np.arange(len(w))[wmask]:
+            expo = ISSF_Exposure(wavelength=w[idx],data=nc['Data'][...,idx],
+                                 nrow=2048,ncol=2048,
+                                 int_time=None)
+            expo.flip_columns()
+            self.logger.info('loading {:.3f} nm'.format(w[idx]))
+            self.append(expo)
+        
+        nc.close()
     def read_MethaneSAT(self,info_csv_path,
                         data_dir,which_band,
                         if_remove_straylight=False,
