@@ -618,6 +618,26 @@ class Single_ISRF(OrderedDict):
     def __init__(self):
         self.logger = logging.getLogger(__name__)
     
+    def merge(self,isrf):
+        '''
+        merge with another isrf at the same row/wavelength. 
+        needed for methanesat where multiple fields fill the the slit
+        '''
+        if self['row'] != isrf['row']:
+            self.logger.error('row inconsistent!')
+            return
+        if not all(np.isclose(self['dw_grid'],isrf['dw_grid'])):
+            self.logger.warning('dw grid inconsistent, use the first one, good luck')
+        new_isrf = Single_ISRF()
+        new_isrf['row'] = self['row']
+        new_isrf['dw_grid'] = self['dw_grid']
+        w1 = np.nanmean(self['scales_{}'.format(self['niter'])])
+        w2 = np.nanmean(isrf['scales_{}'.format(isrf['niter'])])
+        new_isrf['ISRF'] = (w1*self['ISRF']+w2*isrf['ISRF'])/(w1+w2)
+        # make sure the new isrf integrates to 1
+        new_isrf['ISRF'] = new_isrf['ISRF']/np.trapz(new_isrf['ISRF'],new_isrf['dw_grid'])
+        return new_isrf
+    
     def smooth_ISRF_by_iterative_savgol(self,window_length=81, polyorder=3, 
                      logResidualThreshold=[0.5,0.25,0.1,0.05,0.01], nIteration=None, tail=0.28):
         '''
