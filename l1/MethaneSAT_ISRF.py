@@ -618,11 +618,19 @@ class Single_ISRF(OrderedDict):
     def __init__(self):
         self.logger = logging.getLogger(__name__)
     
-    def merge(self,isrf):
+    def merge(self,isrf,min_scale=8000):
         '''
         merge with another isrf at the same row/wavelength. 
         needed for methanesat where multiple fields fill the the slit
+        isrf:
+            another Single_ISRF object
+        min_scale:
+            if one isrf has scale lower than it, the other will be used without weighting
         '''
+        if 'row' not in self.keys():
+            return isrf
+        if 'row' not in isrf.keys():
+            return self
         if self['row'] != isrf['row']:
             self.logger.error('row inconsistent!')
             return
@@ -633,6 +641,15 @@ class Single_ISRF(OrderedDict):
         new_isrf['dw_grid'] = self['dw_grid']
         w1 = np.nanmean(self['scales_{}'.format(self['niter'])])
         w2 = np.nanmean(isrf['scales_{}'.format(isrf['niter'])])
+        if w1 < min_scale and w2 >= min_scale:
+            self.logger.debug('second isrf receives full weight')
+            w1 = 0.;w2 = 1.
+        elif w1 >= min_scale and w2 < min_scale:
+            self.logger.debug('first isrf receives full weight')
+            w1 = 1.;w2 = 0.
+        elif w1 < min_scale and w2 < min_scale:
+            self.logger.warning('both isrfs are lower than min_scale of {}!!!'.format(min_scale))
+            
         new_isrf['ISRF'] = (w1*self['ISRF']+w2*isrf['ISRF'])/(w1+w2)
         # make sure the new isrf integrates to 1
         new_isrf['ISRF'] = new_isrf['ISRF']/np.trapz(new_isrf['ISRF'],new_isrf['dw_grid'])
@@ -861,7 +878,23 @@ class Single_ISRF(OrderedDict):
         return figout
 
 class Multiple_ISRFs():
+    """an class representing multiple ISRF in a row-central wavelength framework
     
+    Items:
+        shape: (number of rows, number of central wavelengths), should equal to self.data.shape
+        rows_1based: an integer array of rows
+        row_mask: keep as None
+        central_wavelengths: an array of central wavelengths
+        data: 2D numpy object array with shape len(rows_1based) by len(central_wavelengths). each element is a Single_ISRF object
+        dw_grid: wavelength grid common for all elements in data
+        
+    Methods:
+        __init__: initializes instance and key attributes.
+        load_Single_ISRF: assemble Multiple_ISRFs from a list of Single_ISRF or a list of file names
+        merge_by_row: merge two Multiple_ISRFs objects with same wavelengths but different rows into one
+        merge_by_wavelength: merge by wavelength
+        
+    """
     def __init__(self,central_wavelengths=None,rows_1based=None,nc_fn=None,
                  dtype=Single_ISRF,instrum=None,which_band=None,row_mask=None):
         self.logger = logging.getLogger(__name__)
@@ -918,6 +951,86 @@ class Multiple_ISRFs():
                 if len(idx) == 1:
                     self.data[ir][ic] = isrf_list[idx[0]]
     
+    def merge_by_wavelength(self,misrf):
+        if self.shape[0]*self.shape[1] == 0:
+            return misrf
+        if misrf.shape[0]*misrf.shape[1] == 0:
+            return self
+        if not all(np.isclose(self.rows_1based,misrf.rows_1based)):
+            self.logger.error('wavelength dimension has to be consistent!')
+            return
+        union_wvls = np.union1d(self.central_wavelengths,misrf.central_wavelengths)
+        new_misrf = Multiple_ISRFs(central_wavelengths=union_wvls,
+                                   rows_1based=self.rows_1based,
+                                   instrum=self.instrum,which_band=self.which_band)
+        
+        if hasattr(self,'dw_grid'):
+            new_misrf.dw_grid = self.dw_grid
+        elif hasattr(misrf,'dw_grid'):
+            new_misrf.dw_grid = misrf.dw_grid
+        else:
+            self.logger.error('both misrf objects seem to be empty!')
+            return
+        # rows only in the first object, not in the second
+        mask_12 = np.isin(new_misrf.central_wavelengths,np.setdiff1d(self.central_wavelengths,misrf.central_wavelengths))
+        mask_1 = np.isin(self.central_wavelengths,np.setdiff1d(self.central_wavelengths,misrf.central_wavelengths))
+        new_misrf.data[:,mask_12] = self.data[:,mask_1]
+        # rows only in the second object, not in the first
+        mask_21 = np.isin(new_misrf.central_wavelengths,np.setdiff1d(misrf.central_wavelengths,self.central_wavelengths))
+        mask_2 = np.isin(misrf.central_wavelengths,np.setdiff1d(misrf.central_wavelengths,self.central_wavelengths))
+        new_misrf.data[:,mask_21] = misrf.data[:,mask_2]
+        # rows in both
+        intersect_wvls = np.intersect1d(self.central_wavelengths,misrf.central_wavelengths)
+        mask_12_inter = np.isin(new_misrf.central_wavelengths,intersect_wvls)
+        mask_1_inter = np.isin(self.central_wavelengths,intersect_wvls)
+        mask_2_inter = np.isin(misrf.central_wavelengths,intersect_wvls)
+        self.logger.info('merged misrf has {} wvls, {} from 1, {} from 2, {} merged from both'.format(len(new_misrf.central_wavelengths),np.sum(mask_1),np.sum(mask_2),np.sum(mask_12_inter)))
+        if np.sum(mask_12_inter) > 0:
+            self.logging.error('this should not happen!')
+            return
+        return new_misrf    
+        
+    def merge_by_row(self,misrf,**kwargs):
+        if self.shape[0]*self.shape[1] == 0:
+            return misrf
+        if misrf.shape[0]*misrf.shape[1] == 0:
+            return self
+        if self.shape[1] != misrf.shape[1]:
+            self.logger.error('wavelength dimension has to be consistent!')
+            return
+        
+        union_rows = np.union1d(self.rows_1based,misrf.rows_1based)
+        new_misrf = Multiple_ISRFs(central_wavelengths=self.central_wavelengths,
+                                   rows_1based=union_rows,
+                                   instrum=self.instrum,which_band=self.which_band)
+        if hasattr(self,'dw_grid'):
+            new_misrf.dw_grid = self.dw_grid
+        elif hasattr(misrf,'dw_grid'):
+            new_misrf.dw_grid = misrf.dw_grid
+        else:
+            self.logger.error('both misrf objects seem to be empty!')
+            return
+        # rows only in the first object, not in the second
+        mask_12 = np.isin(new_misrf.rows_1based,np.setdiff1d(self.rows_1based,misrf.rows_1based))
+        mask_1 = np.isin(self.rows_1based,np.setdiff1d(self.rows_1based,misrf.rows_1based))
+        new_misrf.data[mask_12,] = self.data[mask_1,]
+        # rows only in the second object, not in the first
+        mask_21 = np.isin(new_misrf.rows_1based,np.setdiff1d(misrf.rows_1based,self.rows_1based))
+        mask_2 = np.isin(misrf.rows_1based,np.setdiff1d(misrf.rows_1based,self.rows_1based))
+        new_misrf.data[mask_21,] = misrf.data[mask_2,]
+        # rows in both
+        intersect_rows = np.intersect1d(self.rows_1based,misrf.rows_1based)
+        mask_12_inter = np.isin(new_misrf.rows_1based,intersect_rows)
+        mask_1_inter = np.isin(self.rows_1based,intersect_rows)
+        mask_2_inter = np.isin(misrf.rows_1based,intersect_rows)
+        self.logger.info('merged misrf has {} rows, {} from 1, {} from 2, {} merged from both'.format(len(new_misrf.rows_1based),np.sum(mask_1),np.sum(mask_2),np.sum(mask_12_inter)))
+        for iwvl in range(self.shape[1]):
+            new_misrf.data[mask_12_inter,iwvl] = [isrf1.merge(isrf2,**kwargs)
+                                            for (isrf1,isrf2) in zip(
+                                            self.data[mask_1_inter,iwvl],
+                                            misrf.data[mask_2_inter,iwvl])]
+        return new_misrf    
+        
     def peak_widths(self,percent=0.5,use_isrf_data=True):
         '''
         find peak width for each Single_ISRF
