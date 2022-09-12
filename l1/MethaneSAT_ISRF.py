@@ -636,6 +636,8 @@ class Single_ISRF(OrderedDict):
             return
         if not all(np.isclose(self['dw_grid'],isrf['dw_grid'])):
             self.logger.warning('dw grid inconsistent, use the first one, good luck')
+        self.tighten(remove_iterations=False)
+        isrf.tighten(remove_iterations=False)
         new_isrf = Single_ISRF()
         new_isrf['row'] = self['row']
         new_isrf['dw_grid'] = self['dw_grid']
@@ -650,7 +652,9 @@ class Single_ISRF(OrderedDict):
         elif w1 < min_scale and w2 < min_scale:
             self.logger.warning('both isrfs are lower than min_scale of {}!!!'.format(min_scale))
             
-        new_isrf['ISRF'] = (w1*self['ISRF']+w2*isrf['ISRF'])/(w1+w2)
+        for f in ['ISRF','center_pix_final','scales_final','pp_final','pp_inv_final','centers_of_mass_final']:
+            new_isrf[f] = (w1*self[f]+w2*isrf[f])/(w1+w2)
+        new_isrf['niter'] = np.max([self['niter'],isrf['niter']])
         # make sure the new isrf integrates to 1
         new_isrf['ISRF'] = new_isrf['ISRF']/np.trapz(new_isrf['ISRF'],new_isrf['dw_grid'])
         return new_isrf
@@ -678,19 +682,28 @@ class Single_ISRF(OrderedDict):
             isrf_savgol=savgol_filter(y_isrf_filtered,window_length=window_length, polyorder=polyorder) 
         self['ISRF'] = isrf_savgol
     
-    def tighten(self):
+    def tighten(self,remove_iterations=True):
         '''
         get rid of diagnostic fields, leaving only the final ISRF
+        get only the final values for center_pix, pp, pp_inv, scales, and centers_of_mass
         '''
-        self['ISRF'] = np.float32(self['isrf_{}'.format(self['niter'])].copy())
-        self['ISSFy'] = np.float32(self['issfy_{}'.format(self['niter'])].copy())
-        self['ISSFys'] = np.float32(self['issfys_{}'.format(self['niter'])].copy())
-        self['ISSFx'] = np.float32(self['issfx_{}'.format(self['niter'])].copy())
-        for i in range(self['niter']+1):
-            self.pop('issfx_{}'.format(i))
-            self.pop('issfy_{}'.format(i))
-            self.pop('issfys_{}'.format(i))
-            self.pop('isrf_{}'.format(i))
+        if 'isrf_{}'.format(self['niter']) in self.keys():
+            self['ISRF'] = np.float32(self['isrf_{}'.format(self['niter'])].copy())
+            self['ISSFy'] = np.float32(self['issfy_{}'.format(self['niter'])].copy())
+            self['ISSFys'] = np.float32(self['issfys_{}'.format(self['niter'])].copy())
+            self['ISSFx'] = np.float32(self['issfx_{}'.format(self['niter'])].copy())
+            if remove_iterations:
+                for i in range(self['niter']+1):
+                    self.pop('issfx_{}'.format(i))
+                    self.pop('issfy_{}'.format(i))
+                    self.pop('issfys_{}'.format(i))
+                    self.pop('isrf_{}'.format(i))
+        if 'center_pix_{}'.format(self['niter']) in self.keys():
+            for f in ['center_pix', 'pp', 'pp_inv', 'scales', 'centers_of_mass']:
+                self[f+'_final'] = self['{}_{}'.format(f,self['niter'])]
+                if remove_iterations:
+                    for i in range(self['niter']+1):
+                        self.pop('{}_{}'.format(f,i))
     
     def save_mat(self,fn):
         '''
@@ -715,12 +728,18 @@ class Single_ISRF(OrderedDict):
     def center_pix(self):
         if 'niter' not in self.keys():
             return np.nan
-        return self['center_pix_{}'.format(self['niter'])]
+        if 'center_pix_final' in self.keys():
+            return self['center_pix_final']
+        else:
+            return self['center_pix_{}'.format(self['niter'])]
     
     def tuning_rate(self):
         if 'niter' not in self.keys():
             return np.nan
-        return self['pp_inv_{}'.format(self['niter'])][0]
+        if 'pp_inv_final' in self.keys():
+            return self['pp_inv_final']
+        else:
+            return self['pp_inv_{}'.format(self['niter'])][0]
     
     def peak_width(self,percent=0.5,field=None):
         if field is None:
@@ -1052,6 +1071,8 @@ class Multiple_ISRFs():
                 if 'niter' not in self.data[irow,iw].keys():
                     self.logger.warning('ISRF at row {}, central wavelength {} seems to be empty'.format(self.rows_1based[irow],self.central_wavelengths[iw]))
                     continue
+                elif 'center_pix_final' in self.data[irow,iw].keys():
+                    center_pix[irow,iw] = self.data[irow,iw]['center_pix_final']
                 else:
                     center_pix[irow,iw] = self.data[irow,iw]['center_pix_{}'.format(self.data[irow,iw]['niter'])]
         mwindow=51
@@ -1096,6 +1117,9 @@ class Multiple_ISRFs():
                 if 'niter' not in data[irow,iw].keys():
                     self.logger.warning('ISRF at row {}, central wavelength {} seems to be empty'.format(self.rows_1based[irow],self.central_wavelengths[iw]))
                     continue
+                elif 'center_pix_final' in data[irow,iw].keys():
+                    center_pix[irow,iw] = data[irow,iw]['center_pix_final']
+                    center_pix_median[irow,iw] = data[irow,iw]['center_pix_final']
                 else:
                     center_pix[irow,iw] = data[irow,iw]['center_pix_{}'.format(data[irow,iw]['niter'])]
                     center_pix_median[irow,iw] = data[irow,iw]['center_pix_{}'.format(data[irow,iw]['niter'])]
@@ -1180,7 +1204,7 @@ class Multiple_ISRFs():
                     nm_per_pix = nm_per_pix+self.wavcal_poly[row_index,ipoly]*ipoly*\
                     np.power(self.data[row_index,iw].center_pix(),ipoly-1)
                 dispersion.append(nm_per_pix)
-                local_tr.append(self.data[row_index,iw]['pp_inv_{}'.format(self.data[row_index,iw]['niter'])][0])
+                local_tr.append(self.data[row_index,iw]['pp_inv_final'][0])
             tmp=ax.plot(self.central_wavelengths,dispersion,
             self.central_wavelengths,local_tr,'o',color=bright_clist[i])
             ll.append(tmp[0])
