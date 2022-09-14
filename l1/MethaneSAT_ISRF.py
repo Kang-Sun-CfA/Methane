@@ -654,6 +654,29 @@ class Single_ISRF(OrderedDict):
             
         for f in ['ISRF','center_pix_final','scales_final','pp_final','pp_inv_final','centers_of_mass_final']:
             new_isrf[f] = (w1*self[f]+w2*isrf[f])/(w1+w2)
+        
+        if np.ptp(isrf['ISSFx']) < np.ptp(self['ISSFx']):
+            issfx_narrower = isrf['ISSFx']
+            issfx_wider = self['ISSFx']
+            issfys_narrower = isrf['ISSFys']
+            issfys_wider = self['ISSFys']
+            weight_narrower = w2
+            weight_wider = w1
+        else:
+            issfx_narrower = self['ISSFx']
+            issfx_wider = isrf['ISSFx']
+            issfys_narrower = self['ISSFys']
+            issfys_wider = isrf['ISSFys']
+            weight_narrower = w1
+            weight_wider = w2
+        # use the shorter issfx range, interpolate the wider to short and weight-average
+        new_isrf['ISSFx'] = issfx_narrower
+        interp_func = interp1d(issfx_wider,issfys_wider,bounds_error=False,fill_value=np.nan)
+        issfys_wider_interp = interp_func(issfx_narrower)
+        new_isrf['ISSFys'] = np.nansum(np.column_stack((issfys_narrower*weight_narrower,issfys_wider_interp*weight_wider)),axis=1)/(weight_narrower+weight_wider)
+        xmask = (new_isrf['ISSFx'] > np.nanmax([np.nanmin(issfx_narrower),np.nanmin(issfx_narrower)]))&(new_isrf['ISSFx'] <np.nanmin([np.nanmax(issfx_narrower),np.nanmax(issfx_narrower)]))
+        new_isrf['ISSFx'] = new_isrf['ISSFx'][xmask]
+        new_isrf['ISSFys'] = new_isrf['ISSFys'][xmask]
         new_isrf['niter'] = np.max([self['niter'],isrf['niter']])
         # make sure the new isrf integrates to 1
         new_isrf['ISRF'] = new_isrf['ISRF']/np.trapz(new_isrf['ISRF'],new_isrf['dw_grid'])
