@@ -526,8 +526,6 @@ class Central_Wavelength(list):
                 bright.remove_straylight(K_far,n_iter=straylight_n_iter)
                 self.logger.info('straylight done')
             bright.flip_columns()
-            if which_band.lower() == 'o2':
-                bright.flip_rows()
             self.append(bright)
     
     def reduce(self,use_rows_1based=None,pix_ext=10):
@@ -1308,6 +1306,31 @@ class Multiple_ISRFs():
         self.isrf_data = isrf_data
         self.outlier_criterion = outlier_criterion
     
+    def fill_gaps(self,nrows_to_average=30):
+        '''
+        Gap filling of isrf and wavcal coefficients using the closest 
+        nrows_to_average valid (non-nan) rows at the same central wavelength
+        '''
+        filled_mask = np.isnan(np.sum(self.isrf_data,axis=2))
+        for irow in range(filled_mask.shape[0]):
+            for icol in range(filled_mask.shape[1]):
+                if not filled_mask[irow,icol]:
+                    continue
+                available_rows = self.rows_1based[~filled_mask[:,icol]]
+                rows_to_average_0based = (available_rows[np.argsort(np.abs(available_rows-self.rows_1based[irow]))[0:nrows_to_average]]-1).astype(int)
+                self.isrf_data[irow,icol,:] = np.mean(self.isrf_data[rows_to_average_0based,icol,:],axis=0)
+                self.isrf_data[irow,icol,:] = self.isrf_data[irow,icol,:]/np.trapz(self.isrf_data[irow,icol,:],self.dw_grid)
+        
+        ismissing_wavcal = np.isnan(self.wavcal_poly[:,0])
+        for irow in range(len(ismissing_wavcal)):
+            if not ismissing_wavcal[irow]:
+                continue
+            available_rows = self.rows_1based[~ismissing_wavcal]
+            rows_to_average_0based = (available_rows[np.argsort(np.abs(available_rows-self.rows_1based[irow]))[0:nrows_to_average]]-1).astype(int)
+            self.wavcal_poly[irow,:] = np.mean(self.wavcal_poly[rows_to_average_0based,:],axis=0)
+        
+        
+        
     def read_nc(self,fn):
         '''
         read a nc file and populate the object
@@ -1320,6 +1343,11 @@ class Multiple_ISRFs():
         self.shape = (self.isrf_data.shape[0],self.isrf_data.shape[1])
         self.wavcal_poly = nc['pix2nm_polynomial'][:].filled(np.nan)
         self.n_wavcal_poly = self.wavcal_poly.shape[1]
+        self.instrum = nc.instrument
+        self.which_band = nc.band
+        if 'filled_mask' in nc.variables.keys():
+            self.filled_mask = nc['filled_mask'][:]
+        nc.close()
         return self
         
     def save_nc(self,fn,saving_time=None):
@@ -1357,6 +1385,12 @@ class Multiple_ISRFs():
         var_isrf.units = 'nm^-1'
         var_isrf.long_name = 'ISRF'
         var_isrf[:] = self.isrf_data
+        
+        if hasattr(self,'filled_mask'):
+            var_mask = nc.createVariable('filled_mask',np.int,('ground_pixel','central_wavelength'))
+            var_mask.units = 'T/F'
+            var_mask.long_name = '1-filled,0-not filled'
+            var_mask[:] = self.filled_mask
         
         var_wavcal = nc.createVariable('pix2nm_polynomial',np.float,('ground_pixel','polynomial'))
         var_wavcal.long_name = 'wavelength calibration coefficients, starting from intercept'
