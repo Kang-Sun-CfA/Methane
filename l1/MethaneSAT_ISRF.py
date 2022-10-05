@@ -1312,6 +1312,7 @@ class Multiple_ISRFs():
         nrows_to_average valid (non-nan) rows at the same central wavelength
         '''
         filled_mask = np.isnan(np.sum(self.isrf_data,axis=2))
+        self.filled_mask = filled_mask
         for irow in range(filled_mask.shape[0]):
             for icol in range(filled_mask.shape[1]):
                 if not filled_mask[irow,icol]:
