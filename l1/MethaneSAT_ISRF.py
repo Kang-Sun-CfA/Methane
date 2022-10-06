@@ -1347,7 +1347,7 @@ class Multiple_ISRFs():
         self.rows_1based = np.arange(1,self.isrf_data.shape[0]+1)
         self.shape = (self.isrf_data.shape[0],self.isrf_data.shape[1])
         self.wavcal_poly = nc['pix2nm_polynomial'][:].filled(np.nan)
-        self.n_wavcal_poly = self.wavcal_poly.shape[1]
+        self.n_wavcal_poly = self.wavcal_poly.shape[1]-1
         self.instrum = nc.instrument
         self.which_band = nc.band
         if 'filled_mask' in nc.variables.keys():
