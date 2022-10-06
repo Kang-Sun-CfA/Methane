@@ -963,7 +963,11 @@ class Multiple_ISRFs():
                 self.logger.error('isrf_list and isrf_flist cannot be both None!')
             isrf_list = np.array([Single_ISRF().read_mat(fn) for fn in isrf_flist])
         # assume dw_grid of all Single_ISRF object in isrf_list is the same
-        self.dw_grid = isrf_list[0]['dw_grid']
+        for aisrf in isrf_list:
+            if dw_grid in aisrf.keys():
+                self.dw_grid = aisrf['dw_grid']
+                break
+        
         isrf_rows = np.array([isrf['row'] for isrf in isrf_list])
         isrf_cws = np.array([isrf['central_wavelength'] for isrf in isrf_list])
         if self.instrum is None:
