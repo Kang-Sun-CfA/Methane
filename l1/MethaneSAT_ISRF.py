@@ -964,7 +964,7 @@ class Multiple_ISRFs():
             isrf_list = np.array([Single_ISRF().read_mat(fn) for fn in isrf_flist])
         # assume dw_grid of all Single_ISRF object in isrf_list is the same
         for aisrf in isrf_list:
-            if dw_grid in aisrf.keys():
+            if 'dw_grid' in aisrf.keys():
                 self.dw_grid = aisrf['dw_grid']
                 break
         
