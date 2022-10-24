@@ -380,12 +380,14 @@ class Central_Wavelength(list):
         self.nrow = nrow
         self.ncol = ncol
     
-    def read_jf_nc(self,nc_fn,micro_window=None,micro_step=1):
+    def read_jf_nc(self,nc_fn,micro_window=None,micro_step=1,window_size=None):
         '''read nc files from Jonathan Franklin
         micro_window:
             window size in nm to subset the wavelength micro steps
         micro_step:
             if thinning the micro steps
+        window_size:
+            if not None, call ISSF_Exposure.running_average_rows(window_size) to running average rows
         '''
         self.logger.info('loading {}'.format(nc_fn))
         nc = Dataset(nc_fn,'r')
@@ -406,6 +408,8 @@ class Central_Wavelength(list):
                                  nrow=2048,ncol=2048,
                                  int_time=None)
             expo.flip_columns()
+            if window_size is not None:
+                expo.running_average_rows(window_size)
             self.logger.info('loading {:.3f} nm'.format(w[idx]))
             self.append(expo)
         
