@@ -643,8 +643,8 @@ class Single_ISRF(OrderedDict):
         new_isrf = Single_ISRF()
         new_isrf['row'] = self['row']
         new_isrf['dw_grid'] = self['dw_grid']
-        w1 = np.nanmean(self['scales_{}'.format(self['niter'])])
-        w2 = np.nanmean(isrf['scales_{}'.format(isrf['niter'])])
+        w1 = np.nanmean(self['scales_final'])
+        w2 = np.nanmean(isrf['scales_final'])
         if w1 < min_scale and w2 >= min_scale:
             self.logger.debug('second isrf receives full weight')
             w1 = 0.;w2 = 1.
@@ -884,7 +884,7 @@ class Single_ISRF(OrderedDict):
         ax1 = fig.add_subplot(gs[:,0])
         self.plot_ISSF(existing_ax=ax1);
         ax1.text(0.025,0.8,'w = {:.2f} nm;\ncol = {:.5f};\nrow = {};\niteration = {} (max {});\nslope={:.5f} nm/pix'.format(
-            self['central_wavelength'],self['center_pix_{}'.format(self['niter'])],self['row'],self['niter'],self['max_iter'],self['pp_inv_{}'.format(self['niter'])][0]),
+            self['central_wavelength'],self['center_pix_final'],self['row'],self['niter'],self['max_iter'],self['pp_inv_final'][0]),
             transform=ax1.transAxes)
         ax1.set_xlim((-5,5))
         ax1.set_ylim((0,0.4))
@@ -912,7 +912,7 @@ class Single_ISRF(OrderedDict):
         ax4.set_ylabel(r'Normalized ISRF [nm$^{-1}$]')
         ax4.set_xlim((-0.3,0.3))
         fwhm = F_peak_width(self['dw_grid'],self['ISRF'],percent=0.5)
-        ax4.text(0.025,0.7,'FWHM = {:.5f} nm;\nsampling = {:.2f} pix'.format(fwhm,fwhm/self['pp_inv_{}'.format(self['niter'])][0]),transform=ax4.transAxes)
+        ax4.text(0.025,0.7,'FWHM = {:.5f} nm;\nsampling = {:.2f} pix'.format(fwhm,fwhm/self['pp_inv_final'][0]),transform=ax4.transAxes)
         figout = {}
         figout['fig'] = fig
         figout['ax1'] = ax1
@@ -1187,22 +1187,24 @@ class Multiple_ISRFs():
     
     def plot_center_pix(self):
         ''' 
-        plot center pix location at center wavelengths for all rows
+        plot smoothed center pixel location at center wavelengths for all rows
         '''
         fig,axs = plt.subplots(1,2,figsize=(9,3.5),constrained_layout=True)
         figout = {}
         figout['fig'] = fig
         figout['axs'] = axs
         ax = axs[0]
-        ax.plot(self.rows_1based,self.center_pix)
+        ax.plot(self.rows_1based,self.center_pix_smooth)
         ax.legend(['{} nm'.format(c) for c in self.central_wavelengths])
         ax.set_xlabel('Spatial pixels')
-        ax.set_ylabel('Spectral pixels')
+        ax.set_ylabel('Spectral pixels smoothed')
         ax = axs[1]
-        ax.plot(self.rows_1based,np.array([c-np.nanmedian(c) for c in self.center_pix.T]).T)
+        ax.plot(self.rows_1based,np.array([c-np.nanmedian(c) for c in self.center_pix_smooth.T]).T)
         ax.set_xlabel('Spatial pixels')
-        ax.set_ylabel('Relative spectral pixels')
+        ax.set_ylabel('Deviation of smoothed spectral pixels from median')
+        ax.set_ylim([-1,1])
         return figout
+
     def plot_dispersion(self,plot_rows=[500,700],ax=None):
         '''
         plot nm per pix at given rows
@@ -1271,6 +1273,23 @@ class Multiple_ISRFs():
         ax2.set_xlabel('Spectral pixel')
         ax1.grid();ax2.grid()
         return figout
+    
+    def plot_isrfs(self, row, which_band):
+        '''
+        Plot normalized ISRF shape for each central wavelength at one row
+        '''
+        fig, ax = plt.subplots(1,len(self.central_wavelengths), figsize=(15,5), constrained_layout=True)
+        figout = {}
+        figout['fig'] = fig
+        figout['ax'] = ax
+        for iw, w in enumerate(self.central_wavelengths):
+            ax[iw].plot(self.dw_grid,self.isrf_data[row,iw,:]/np.max(self.isrf_data[row,iw,:]), label=tmp)
+            ax[iw].legend()
+            ax[iw].set_title(which_band + ' ISRFs \n '+ str(w) + ' nm, ' + 'row '+ str(row))
+            ax[iw].set_yscale('log')
+            ax[iw].set_xlim([-0.5,0.5])
+        return figout
+
     def restretch_ISRF(self):
         ''' 
         update the horizontal axis of ISRF using full-column wavcal
