@@ -14,7 +14,8 @@ import matplotlib.pyplot as plt
 from scipy.interpolate import interp1d
 from scipy.optimize import curve_fit
 from scipy.signal import savgol_filter
-from scipy.ndimage import median_filter
+from scipy.ndimage.filters import generic_filter
+from scipy.ndimage import median_filter, percentile_filter
 from scipy.signal import peak_widths
 from netCDF4 import Dataset
 import datetime as dt
@@ -1283,7 +1284,7 @@ class Multiple_ISRFs():
         figout['fig'] = fig
         figout['ax'] = ax
         for iw, w in enumerate(self.central_wavelengths):
-            ax[iw].plot(self.dw_grid,self.isrf_data[row,iw,:]/np.max(self.isrf_data[row,iw,:]), label=tmp)
+            ax[iw].plot(self.dw_grid,self.isrf_data[row,iw,:]/np.max(self.isrf_data[row,iw,:]), label=w)
             ax[iw].legend()
             ax[iw].set_title(which_band + ' ISRFs \n '+ str(w) + ' nm, ' + 'row '+ str(row))
             ax[iw].set_yscale('log')
@@ -1333,6 +1334,105 @@ class Multiple_ISRFs():
         self.isrf_data = isrf_data
         self.outlier_criterion = outlier_criterion
     
+    def mask_outliers(self, median_filter_size=(5,3,1), outlier_threshold=2, mwindow=51, plot_bad_pixel=True):
+        '''
+        Detect and mask outliers based on log outlier and peak width criteria
+        '''
+        # Detect outlier ISRFs
+        isrf_data = self.isrf_data
+        isrf_data_smooth = median_filter(isrf_data,size=median_filter_size)
+        rms = np.sqrt(np.sum(np.power(isrf_data_smooth-isrf_data,2),axis=2)/(np.count_nonzero(~np.isnan(isrf_data), axis=2)-1))
+        median_rms = np.nanmedian(rms,axis=1)
+        outlier_criterion = rms-median_rms[:,np.newaxis]
+        outlier_mask = np.abs(outlier_criterion)>outlier_threshold*np.nanstd(outlier_criterion)
+        self.logger.info('{} outlier ISRFs will be replaced by NaN'.format(np.sum(outlier_mask)))
+
+        # Peak width zero and NaN values mask
+        fw = np.empty((3,outlier_mask.shape[0],outlier_mask.shape[1]))
+        for i,j in enumerate([50, 20, 80]):
+            fw[i,] = self.peak_widths(0.01*j)
+        outlier_mask[np.where(np.count_nonzero(fw, axis=0)<3)]= True
+        outlier_mask[np.where(np.isnan(np.sum(fw, axis=0)))]= True
+        
+        # Apply outlier mask to peak width values
+        fw[:,outlier_mask] = np.nan
+
+        # Out of remaining positions, mask peak width outliers
+        for i,j in enumerate([50, 20, 80]):
+            for iw,w in enumerate(self.central_wavelengths):
+                fw_75 = percentile_filter(fw[i,:,iw],percentile=75, size=mwindow)
+                fw_25 = percentile_filter(fw[i,:,iw],percentile=25, size=mwindow)
+                fw_upper = fw_75 + 1.5*(fw_75 - fw_25)
+                fw_lower = fw_25 - 1.5*(fw_75 - fw_25)
+                threshold = (fw[i,:,iw]>fw_upper) | (fw[i,:,iw]<fw_lower)
+                outlier_mask[threshold,iw] = True
+                fw[i,np.where(threshold),iw]= np.nan
+
+        outlier_mask[np.where(np.count_nonzero(fw, axis=0)<3)]= True
+        outlier_mask[np.where(np.isnan(np.sum(fw, axis=0)))]= True
+        
+        if plot_bad_pixel:
+            self.plot_pixel_mask(outlier_mask, 'log outlier ISRF and peak width mask') 
+
+        # Set masked ISRFs to NaN
+        self.logger.info('{} outlier peak width and ISRFs will be replaced by NaN'.format(np.sum(outlier_mask)))
+        self.isrf_data[outlier_mask,] = self.isrf_data[outlier_mask,]*np.nan
+
+        return outlier_mask
+
+    def plot_pixel_mask(self, outlier_mask, plot_title):
+        '''
+        Plot bad pixel positions
+        '''
+        fig,ax = plt.subplots()
+        figout = {}
+        figout['fig'] = fig
+        figout['ax'] = ax
+        pc=ax.pcolormesh(self.central_wavelengths,self.rows_1based,outlier_mask,
+                         shading='auto')
+        ax.set_title('Bad pixel positions: '+plot_title)
+        ax.set_xlabel('Wavelength [nm]')
+        ax.set_ylabel('Spatial pixel')
+        return figout
+    
+    def wavcal_outlier_mask(self, row_mask, window_size=151, polyorder=3, outlier_threshold=1, diagnostic_plot=True):
+        '''
+        Mask outlier wavcal rows where wavcal intercept/slope deviation from savgol-filtered value > outlier_threshold*std, 
+        Replace masked wavcal rows with wavcal of good neighbors
+        '''
+        wavcal_mask = np.full(self.rows_1based.shape, False, dtype=bool)
+        rows_valid = np.where(row_mask == False)[0]
+        
+        for i,j in enumerate(['Intercept','Slope']):
+            if not (np.isnan(self.wavcal_poly[rows_valid,i]).any()):
+                wavcal_savgol=savgol_filter(self.wavcal_poly[rows_valid,i], window_length=window_size, polyorder=polyorder) 
+                wavcal_std = generic_filter(self.wavcal_poly[rows_valid,i], np.nanstd, size=window_size)
+                wavcal_mask[rows_valid] = np.abs(self.wavcal_poly[rows_valid,i]-wavcal_savgol) > outlier_threshold*wavcal_std
+
+                if diagnostic_plot:
+                    fig,ax = plt.subplots(sharex=True,sharey=True,constrained_layout=True) 
+                    ax.plot(self.rows_1based,self.wavcal_poly[:,i], marker='.', linestyle='None', label='raw')
+                    ax.plot(self.rows_1based[rows_valid],wavcal_savgol, linestyle='--', label='savgol')
+                    ax.plot(self.rows_1based[wavcal_mask],self.wavcal_poly[wavcal_mask,i], marker='.', 
+                            linestyle='None', color='k', label='masked')
+                    ax.legend()
+                    ax.set_xlabel('Rows 1-based')
+                    if i==0:
+                        current_values = plt.gca().get_yticks()
+                        plt.gca().set_yticklabels(['{:.4f}'.format(x) for x in current_values])
+                        ax.set_ylabel('Intercept [nm]')
+                    elif i==1:
+                        if self.which_band=='CH4':
+                            ax.set_ylim([0.0785,0.0787])
+                        elif self.which_band=='O2':
+                            ax.set_ylim([0.05677,0.0571])
+                        ax.set_ylabel('Slope [nm per pixel]')
+
+        # Set masked wavcal to NaN
+        self.logger.info('{} outlier wavcals will be replaced by NaN'.format(np.sum(wavcal_mask)))
+        self.wavcal_poly[wavcal_mask,] = self.wavcal_poly[wavcal_mask,]*np.nan
+        return wavcal_mask
+
     def fill_gaps(self,nrows_to_average=30):
         '''
         Gap filling of isrf and wavcal coefficients using the closest 
