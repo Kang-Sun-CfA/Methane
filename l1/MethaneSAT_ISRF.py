@@ -93,17 +93,32 @@ def F_stray_light_input(strayLightKernelPath,rowExtent=400,colExtent=400,
 
 class Merged_Frame(dict):
     ''' 
-    merged exposures with a range of integration times
+    merged exposures with a range of integration times and/or laser powers
     '''
-    def __init__(self,ISSF_Exposure_list,limits=None,normalize_peak=True):
+    def __init__(self,expo_list_high2low,limits=None,normalize_peak=True):
+        '''
+        expo_list_high2low:
+            a list of ISSF_Exposure instances, has to be in the order of high exposure to low exposure. 
+            assume the exposure is in DN (not normalized, not radiometrically calibrated)
+        limits:
+            a list same size as expo_list_high2low. DN lower than this limit is included in the merged frame, 
+            then go to the next exposure, which should be with lower in time and/or laser power. 
+            default is [5000,...,20000], the 20000 is higher than the saturation DN for both methaneair and methanesat,
+            so that the shorted in time peak is always included
+        normalize_peak:
+            if true, make the merged psf max at 1
+        '''
         self.logger = logging.getLogger(__name__)
         if limits is None:
-            limits = np.ones(ISSF_Exposure_list.shape)*5000
+            limits = np.ones(expo_list_high2low.shape)*5000
             limits[-1] = 20000
-        # make sure integration time goes from high to low
-        ISSF_Exposure_list = np.array(ISSF_Exposure_list)[np.argsort([expo['int_time'] for expo in ISSF_Exposure_list])][::-1]
-        for (i,(expo,limit)) in enumerate(zip(ISSF_Exposure_list,limits)):
-            tmp_data = np.ma.masked_where(expo['data']>limit, expo['data'])/expo['int_time']
+        
+        for (i,(expo,limit)) in enumerate(zip(expo_list_high2low,limits)):
+            # in case the expo object has no power or int time
+            expo_power = expo['power'] or 1.
+            expo_int_time = expo['int_time'] or 1.
+            
+            tmp_data = np.ma.masked_where(expo['data']>limit, expo['data'])/expo_int_time/expo_power
             if i == 0:
                 tmp_data0 = tmp_data
                 data = tmp_data
