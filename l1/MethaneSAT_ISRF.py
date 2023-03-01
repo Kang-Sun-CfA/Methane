@@ -95,13 +95,13 @@ class Merged_Frame(dict):
     ''' 
     merged exposures with a range of integration times and/or laser powers
     '''
-    def __init__(self,expo_list_high2low,limits=None,normalize_peak=True):
+    def __init__(self,ISSF_Exposure_list,limits=None,normalize_peak=True):
         '''
-        expo_list_high2low:
-            a list of ISSF_Exposure instances, has to be in the order of high exposure to low exposure. 
+        ISSF_Exposure_list:
+            a list of ISSF_Exposure instances, to be sorted in the order of high exposure to low exposure. 
             assume the exposure is in DN (not normalized, not radiometrically calibrated)
         limits:
-            a list same size as expo_list_high2low. DN lower than this limit is included in the merged frame, 
+            a list same size as ISSF_Exposure_list. DN lower than this limit is included in the merged frame, 
             then go to the next exposure, which should be with lower in time and/or laser power. 
             default is [5000,...,20000], the 20000 is higher than the saturation DN for both methaneair and methanesat,
             so that the shorted in time peak is always included
@@ -110,11 +110,19 @@ class Merged_Frame(dict):
         '''
         self.logger = logging.getLogger(__name__)
         if limits is None:
-            limits = np.ones(expo_list_high2low.shape)*5000
+            limits = np.ones(ISSF_Exposure_list.shape)*5000
             limits[-1] = 20000
         
-        for (i,(expo,limit)) in enumerate(zip(expo_list_high2low,limits)):
-            # in case the expo object has no power or int time
+        times = [expo['int_time'] for expo in ISSF_Exposure_list]
+        powers = [expo['power'] for expo in ISSF_Exposure_list]
+        # in case that the expo object has no power or int time, fill them by 1.
+        df = pd.DataFrame(dict(time=times,power=powers)).fillna(1.)
+        df = df.sort_values(by=['time','power'],ascending=False,ignore_index=False)
+        # make sure integration time/power go from high to low
+        ISSF_Exposure_list = np.array(ISSF_Exposure_list)[df.index]
+        
+        for (i,(expo,limit)) in enumerate(zip(ISSF_Exposure_list,limits)):
+            
             expo_power = expo['power'] or 1.
             expo_int_time = expo['int_time'] or 1.
             
