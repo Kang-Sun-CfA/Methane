@@ -113,8 +113,25 @@ def F_stray_light_input(strayLightKernelPath,rowExtent=400,colExtent=400,
     return strayLightKernel
 
 class Straylight_Kernel():
-    '''a collection of Merged_Frame objects to construct straylight kernel
     '''
+    class to construct wavelength-merged kernels for each field and field-merged peak (and optionally ghost) 
+    straylight kernels based on input list of Merged_Frame objects 
+    Items:
+        instrum: str, instrument name (e.g. 'MethaneSAT', 'MethaneAIR-E', 'MethaneAIR-X')
+        which_band: str, wavelength band (e.g. 'CH4', 'O2')
+        oversample_factor: int, frames will be first interpolated to a denser grid by this factor
+        cbound: int, half window size to carve out from the peak center in column space
+        rbound: int, half window size to carve out from the peak center in row space, differing from cbound to avoid confusion
+    Methods:
+        __init__: instance and key attributes; regrid raw psf frames to regular, denser grid
+        load_Merged_Frame: Load 2D array of Merged_Frame objects in preparation for kernel construction; builds fld_kernels, 
+        a list of wavelength-merged kernels; fits 2D plane background and subtracts from element of fld_kernels
+        get_kernel: Compute merged peak (and optionally ghost) straylight kernels by merging across fields
+        plot_fld_kernels: Plot wavelength-merged kernels at each field
+        plot_merged_kernels: Plot merged straylight kernels
+        save_nc: Save merged straylight kernels to netcdf file
+    '''
+    
     def __init__(self,oversample_factor=5,cbound=200,rbound=125,instrum=None,which_band=None):
         self.logger = logging.getLogger(__name__)
         self.oversample_factor = oversample_factor
@@ -135,9 +152,7 @@ class Straylight_Kernel():
         
     def load_Merged_Frame(self,Merged_Frame_array,flds=None,remove_fld_kernel_bg=True,
                           remove_fld_kernel_bg_kw=None):
-        '''load a 2d array of Merged_Frame objects in preparation for kernel construction.
-        this function add fld_kernels, a list of kernels merged along wavelength only
-        '''
+        
         if not isinstance(Merged_Frame_array,np.ndarray):
             Merged_Frame_array = np.array(Merged_Frame_array)
         if Merged_Frame_array.ndim == 1:
@@ -277,7 +292,62 @@ class Straylight_Kernel():
         else:
             cb = None
         return dict(fig=fig,axs=axs,cb=cb)
-
+    
+    def plot_merged_kernels(self,flds=None,vmin=1e-8,vmax=1,draw_colorbar=True,get_ghost=True,**kwargs):
+        if get_ghost==True:
+            fig,axs = plt.subplots(1,2,figsize=(12,5),sharex=True,sharey=True)
+            for ax,kernel in zip(axs,[self.peak_kernel,self.ghost_kernel]):
+                ax.pcolormesh(*F_center2edge(self.centered_c_grid_coarse,self.centered_r_grid_coarse),
+                              kernel,norm=LogNorm(vmin=vmin,vmax=vmax),**kwargs)
+        else:
+            fig,axs = plt.subplots(figsize=(20,10),sharex=True,sharey=True)
+            pc=axs.pcolormesh(*F_center2edge(self.centered_c_grid_coarse,self.centered_r_grid_coarse),
+                                             self.peak_kernel,norm=LogNorm(vmin=vmin,vmax=vmax),**kwargs)
+        if draw_colorbar:
+            cb = fig.colorbar(pc, ax=axs, label='signal')
+        else:
+            cb = None
+        return dict(fig=fig,axs=axs,cb=cb)
+                              
+    def save_nc(self, out_dir, data_collection_date=None, saving_time=None):
+        if saving_time is None:
+            saving_time = dt.datetime.now()
+        if data_collection_date is None:
+            data_collection_date = dt.datetime.now()
+        fn = os.path.join(out_dir,self.instrum+'_'+self.which_band+'_straylight_kernel_'+
+                          saving_time.strftime('%Y-%m-%dT%H:%M:%SZ')+'.nc')
+        nc = Dataset(fn,'w')
+        ncattr_dict = {'description':self.instrum + ' straylight kernels',
+                       'institution':'University at Buffalo',
+                       'contact':'Kang Sun, kangsun@buffalo.edu',
+                       'history':'Created '+saving_time.strftime('%Y-%m-%dT%H:%M:%SZ'),
+                       'instrument':self.instrum,
+                       'band':self.which_band,
+                       'data_collection_date':data_collection_date,
+                       'oversample_factor':self.oversample_factor}
+        nc.setncatts(ncattr_dict)
+        
+        nc.createDimension('cdim',len(self.centered_c_grid_coarse))
+        var_centered_c_grid = nc.createVariable('centered_c_grid_coarse',np.float,('cdim',))
+        var_centered_c_grid.long_name = 'Centered column grid'
+        var_centered_c_grid[:] = self.centered_c_grid_coarse
+        
+        nc.createDimension('rdim',len(self.centered_r_grid_coarse))
+        var_centered_r_grid = nc.createVariable('centered_r_grid_coarse',np.float,('rdim',))
+        var_centered_r_grid.long_name = 'Centered row grid'
+        var_centered_r_grid[:] = self.centered_r_grid_coarse
+        
+        var_peak_kernel = nc.createVariable('peak_kernel',np.float,('rdim','cdim'))  
+        var_peak_kernel.long_name = 'Peak straylight kernel'
+        var_peak_kernel[:] = self.peak_kernel
+        
+        if self.instrum=='MethaneSAT':
+            var_ghost_kernel = nc.createVariable('ghost_kernel',np.float,('rdim','cdim'))
+            var_ghost_kernel.long_name = 'Ghost straylight kernel'
+            var_ghost_kernel[:] = self.ghost_kernel
+            
+        nc.close()
+                          
 class Merged_Frame(dict):
     ''' 
     merged exposures with a range of integration times and/or laser powers
