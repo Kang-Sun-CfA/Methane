@@ -11,12 +11,14 @@ import logging
 from collections import OrderedDict
 from scipy.io import loadmat, savemat
 import matplotlib.pyplot as plt
-from scipy.interpolate import interp1d
+from matplotlib.colors import LogNorm
+from scipy.interpolate import interp1d, RegularGridInterpolator
 from scipy.optimize import curve_fit
-from scipy.signal import savgol_filter
+from scipy.signal import savgol_filter, medfilt2d, peak_widths
 from scipy.ndimage.filters import generic_filter
 from scipy.ndimage import median_filter, percentile_filter
-from scipy.signal import peak_widths
+from scipy.linalg import lstsq
+from skimage.measure import block_reduce
 from netCDF4 import Dataset
 import datetime as dt
 from astropy.convolution import convolve_fft
@@ -31,6 +33,25 @@ def arange_(lower,upper,step,dtype=None):
         upper_new += step
         npnt += 1    
     return np.linspace(lower,upper_new,int(npnt),dtype=dtype)
+
+def F_ncread_selective(fn,varnames,varnames_short=None):
+    """
+    very basic netcdf reader, similar to F_ncread_selective.m
+    created on 2019/08/13
+    """
+    from netCDF4 import Dataset
+    ncid = Dataset(fn,'r')
+    outp = {}
+    if varnames_short is None:
+        varnames_short = varnames
+    for (i,varname) in enumerate(varnames):
+        try:
+            outp[varnames_short[i]] = ncid[varname][:].filled(np.nan)
+        except:
+            logging.debug('{} cannot be filled by nan or is not a masked array'.format(varname))
+            outp[varnames_short[i]] = ncid[varname][:]
+    ncid.close()
+    return outp
 
 def F_center_of_mass(xx,yy):
     mask = (~np.isnan(xx)) & (~np.isnan(yy))
@@ -91,11 +112,177 @@ def F_stray_light_input(strayLightKernelPath,rowExtent=400,colExtent=400,
     strayLightKernel[np.ix_(centerRowFilter,centerColFilter)] = 0
     return strayLightKernel
 
+class Straylight_Kernel():
+    '''a collection of Merged_Frame objects to construct straylight kernel
+    '''
+    def __init__(self,oversample_factor=5,cbound=200,rbound=125,instrum=None,which_band=None):
+        self.logger = logging.getLogger(__name__)
+        self.oversample_factor = oversample_factor
+        self.cbound = cbound
+        self.rbound = rbound
+        self.instrum = instrum
+        self.which_band = which_band
+        self.centered_c_grid = np.linspace(-self.cbound-0.5+1/self.oversample_factor/2,
+                               self.cbound+0.5-1/self.oversample_factor/2,
+                               np.round((self.cbound*2+1)*self.oversample_factor),dtype=float)
+        self.centered_r_grid = np.linspace(-self.rbound-0.5+1/self.oversample_factor/2,
+                               self.rbound+0.5-1/self.oversample_factor/2,
+                               np.round((self.rbound*2+1)*self.oversample_factor),dtype=float)
+        self.centered_r_grid_coarse = np.linspace(-self.rbound,self.rbound,
+                                                  int(2*self.rbound+1),dtype=float)
+        self.centered_c_grid_coarse = np.linspace(-self.cbound,self.cbound,
+                                                  int(2*self.cbound+1),dtype=float)
+        
+    def load_Merged_Frame(self,Merged_Frame_array,flds=None,remove_fld_kernel_bg=True,
+                          remove_fld_kernel_bg_kw=None):
+        '''load a 2d array of Merged_Frame objects in preparation for kernel construction.
+        this function add fld_kernels, a list of kernels merged along wavelength only
+        '''
+        if not isinstance(Merged_Frame_array,np.ndarray):
+            Merged_Frame_array = np.array(Merged_Frame_array)
+        if Merged_Frame_array.ndim == 1:
+            self.logger.warning('received a 1d array. assuming dimension along wvl')
+            Merged_Frame_array = Merged_Frame_array.reshape((1,len(Merged_Frame_array)))
+        self.nrow = Merged_Frame_array[0,0]['nrow']
+        self.ncol = Merged_Frame_array[0,0]['ncol']
+        self.rows_1based = Merged_Frame_array[0,0]['rows_1based']
+        self.cols_1based = Merged_Frame_array[0,0]['cols_1based']
+        self.instrum = self.instrum or Merged_Frame_array[0,0]['instrum']
+        self.which_band = self.which_band or Merged_Frame_array[0,0]['which_band']
+        self.fld_kernel_rmesh,self.fld_kernel_cmesh = np.meshgrid(self.rows_1based,
+                                                                  self.centered_c_grid)
+        self.nfld,self.nwvl = Merged_Frame_array.shape
+        if flds is None:
+            self.flds = np.arange(self.nfld)
+        else:
+            self.flds = flds
+        
+        if remove_fld_kernel_bg:
+            remove_fld_kernel_bg_kw = remove_fld_kernel_bg_kw or\
+            dict(kernel_size=(51,51),percentile=40)
+        # loop over fields
+        fld_kernels = []
+        for irow,Merged_Frame_fld in enumerate(Merged_Frame_array):
+            centered_frames = []
+            # for each field, loop over wavelength
+            for icol,merge in enumerate(Merged_Frame_fld):
+                if merge is None:
+                    self.logger.warning(f'merge at row {irow}, col {icol} is empty!')
+                    continue
+                if 'peak_col_1based' not in merge.keys():
+                    merge.get_spectral_response()
+                f = RegularGridInterpolator((merge['rows_1based'],
+                                             merge['cols_1based']-merge['peak_col_1based']), 
+                                            merge['data'],bounds_error=False)
+                centered_frame = f((self.fld_kernel_rmesh,self.fld_kernel_cmesh)).T
+                centered_frames.append(centered_frame)
+            
+            fld_kernel = block_reduce(np.nanmedian(np.array(centered_frames),axis=0),
+                                      block_size=(1,self.oversample_factor),
+                                      func=np.nanmean)
+            
+            # remove background for kernel in specific field
+            if remove_fld_kernel_bg:
+                kernel_smooth = medfilt2d(fld_kernel,
+                                          kernel_size=remove_fld_kernel_bg_kw['kernel_size']) 
+                kernel_mask = kernel_smooth<=np.nanpercentile(kernel_smooth, 
+                                                              remove_fld_kernel_bg_kw['percentile']) 
+                kernel_mask = kernel_mask & (~np.isnan(fld_kernel))
+                # Best fit linear plane 
+                data = fld_kernel[kernel_mask]
+                X,Y = np.meshgrid(self.centered_c_grid_coarse,self.rows_1based)
+                XX = X[kernel_mask]
+                YY = Y[kernel_mask]
+                A = np.array([np.ones_like(XX), XX, YY]).T
+                C, r, rank, s = np.linalg.lstsq(A, data, rcond=None)
+                bgd_plane = C[0] + C[1]*X + C[2]*Y
+                fld_kernel -= bgd_plane
+            
+            fld_kernels.append(fld_kernel)
+            #end of fields loop        
+        
+        self.fld_kernels = fld_kernels
+    
+    def get_kernel(self,get_ghost=True,flds_for_ghost=None,ghost_peak_row_sum=None):
+        if ghost_peak_row_sum is None:
+            if self.instrum == 'MethaneSAT' and self.which_band == 'CH4':
+                ghost_peak_row_sum = 1986
+            elif self.instrum == 'MethaneSAT' and self.which_band == 'O2':
+                ghost_peak_row_sum = 2120
+            else:
+                get_ghost = False
+        
+        if flds_for_ghost is None:
+            flds_for_ghost = self.flds
+        # Identify peak spatial positions
+        peak_rows = []
+        for (i,fld_kernel) in enumerate(self.fld_kernels):
+            max_idx = np.unravel_index(np.nanargmax(fld_kernel),fld_kernel.shape)
+            max_row_idx = max_idx[0]
+#             # sum +/- 50 columns from center as spatial response
+#             cmask = np.abs(self.centered_c_grid_coarse) < 50
+#             spatial_response = np.nansum(fld_kernel[:,cmask],axis=1)
+            spatial_response = np.nansum(fld_kernel,axis=1)
+            rmask = ~np.isnan(spatial_response) & \
+            (self.rows_1based > self.rows_1based[max_row_idx]-50) &\
+            (self.rows_1based < self.rows_1based[max_row_idx]+50)
+            peak_rows.append(F_center_of_mass(self.rows_1based[rmask],spatial_response[rmask]))
+        self.peak_rows = np.array(peak_rows)
+        
+        # Interpolate to common relative grid 
+        rmesh,cmesh = np.meshgrid(self.centered_r_grid,self.centered_c_grid_coarse)
+        peak_kernels = []
+        if get_ghost:
+            ghost_kernels = []
+        for i,(fld,fld_kernel) in enumerate(zip(self.flds,self.fld_kernels)):
+            peak_row = self.peak_rows[i]
+            f = RegularGridInterpolator((self.rows_1based-peak_row,
+                                         self.centered_c_grid_coarse),
+                                        fld_kernel,
+                                        bounds_error=False)
+            peak_kernel = f((rmesh,cmesh)).T
+            peak_kernels.append(peak_kernel)
+            if get_ghost and fld in flds_for_ghost:
+                f = RegularGridInterpolator((self.rows_1based-(ghost_peak_row_sum-peak_row),
+                                             self.centered_c_grid_coarse),fld_kernel,
+                                            bounds_error=False)
+                ghost_kernel = f((rmesh,cmesh)).T
+                ghost_kernels.append(ghost_kernel)
+                        
+        peak_kernel_median = np.nanmedian(np.array(peak_kernels),axis=0)
+        peak_kernel_median[np.isnan(peak_kernel_median)|(peak_kernel_median<0)] = 0
+        self.peak_kernel = block_reduce(peak_kernel_median,
+                                        block_size=(self.oversample_factor,1),func=np.nanmean)
+        if get_ghost:
+            ghost_kernel_median = np.nanmedian(np.array(ghost_kernels),axis=0)
+            ghost_kernel_median[np.isnan(ghost_kernel_median)|(ghost_kernel_median<0)] = 0
+            self.ghost_kernel = block_reduce(ghost_kernel_median,
+                                         block_size=(self.oversample_factor,1),func=np.nanmean)
+                
+    def plot_fld_kernels(self,figsize=(20,10),flds=None,vmin=1e-8,vmax=1,
+                         draw_colorbar=True,**kwargs):
+        if flds is None:
+            flds = self.flds
+        fig,axs = plt.subplots(1,self.nfld,figsize=figsize,sharex=True,sharey=True)
+        if self.nfld == 1:
+            axs = [axs]
+        for i,(ax,kernel,fld) in enumerate(zip(axs,self.fld_kernels,flds)):
+            pc=ax.pcolormesh(*F_center2edge(self.centered_c_grid_coarse,self.rows_1based),
+                             kernel,norm=LogNorm(vmin=vmin,vmax=vmax),**kwargs)
+            ax.set_title('field {}'.format(fld))
+            ax.set_xlabel('Centered columns')
+            ax.set_ylabel('Rows (1-based)')
+        if draw_colorbar:
+            cb = fig.colorbar(pc, ax=axs, label='signal')
+        else:
+            cb = None
+        return dict(fig=fig,axs=axs,cb=cb)
+
 class Merged_Frame(dict):
     ''' 
     merged exposures with a range of integration times and/or laser powers
     '''
-    def __init__(self,ISSF_Exposure_list,limits=None,normalize_peak=True):
+    def __init__(self,ISSF_Exposure_list=None,limits=None,normalize_peak=True):
         '''
         ISSF_Exposure_list:
             a list of ISSF_Exposure instances, to be sorted in the order of high exposure to low exposure. 
@@ -104,11 +291,13 @@ class Merged_Frame(dict):
             a list same size as ISSF_Exposure_list. DN lower than this limit is included in the merged frame, 
             then go to the next exposure, which should be with lower in time and/or laser power. 
             default is [5000,...,20000], the 20000 is higher than the saturation DN for both methaneair and methanesat,
-            so that the shorted in time peak is always included
+            so that the shortest in time peak is always included
         normalize_peak:
             if true, make the merged psf max at 1
         '''
         self.logger = logging.getLogger(__name__)
+        if ISSF_Exposure_list is None:
+            return
         if limits is None:
             limits = np.ones(ISSF_Exposure_list.shape)*5000
             limits[-1] = 20000
@@ -117,7 +306,8 @@ class Merged_Frame(dict):
         powers = [expo['power'] for expo in ISSF_Exposure_list]
         # in case that the expo object has no power or int time, fill them by 1.
         df = pd.DataFrame(dict(time=times,power=powers)).fillna(1.)
-        df = df.sort_values(by=['time','power'],ascending=False,ignore_index=False)
+        df['timexpower'] = df['time']*df['power']
+        df = df.sort_values(by=['timexpower'],ascending=False,ignore_index=False)
         # make sure integration time/power go from high to low
         ISSF_Exposure_list = np.array(ISSF_Exposure_list)[df.index]
         
@@ -147,7 +337,33 @@ class Merged_Frame(dict):
         self.add('rows_1based',expo['rows_1based'])
         self.add('cols_1based',expo['cols_1based'])
         self.add('wavelength', expo['wavelength'])
+        self.add('nrow', expo['nrow'])
+        self.add('ncol', expo['ncol'])
+        self.add('instrum', expo['instrum'])
+        self.add('which_band', expo['which_band'])
         self.get_spatial_response()
+    
+    def trim(self,start_row,end_row,start_col,end_col):
+        '''return a new, trimmed Merged_Frame'''
+        new_merge = Merged_Frame()
+        for k in ['wavelength','instrum','which_band']:
+            new_merge.add(k,self[k])
+        row_mask = (self['rows_1based'] >= start_row) & (self['rows_1based'] <= end_row)
+        col_mask = (self['cols_1based'] >= start_col) & (self['cols_1based'] <= end_col)
+        new_merge.add('nrow',np.sum(row_mask).astype(int))
+        new_merge.add('ncol',np.sum(col_mask).astype(int))
+        new_merge.add('rows_1based_orig',self['rows_1based'][row_mask])
+        new_merge.add('cols_1based_orig',self['cols_1based'][col_mask])
+        new_merge.add('rows_1based',np.arange(1,new_merge['nrow']+1,dtype=int))
+        new_merge.add('cols_1based',np.arange(1,new_merge['ncol']+1,dtype=int))
+        new_merge.add('data',self['data'][np.ix_(row_mask,col_mask)])
+        max_idx=np.unravel_index(np.nanargmax(new_merge['data']),new_merge['data'].shape)
+        max_col_idx = max_idx[1]
+        max_row_idx = max_idx[0]
+        new_merge.add('max_col_idx',max_col_idx)
+        new_merge.add('max_row_idx',max_row_idx)
+        return new_merge
+    
     def add(self,key,value):
         self.__setitem__(key,value)
     def get_spectral_response(self,spectral_extent=20,spatial_extent=100,
@@ -250,6 +466,8 @@ class ISSF_Exposure(dict):
     Represents a single frame of the 2D detector array. It is a customized class based on dictionary
     
     Items:
+        instrum: name of instrument
+        which_band: name of band
         nrow: number of rows of the frame.
         ncol: number of columns of the frame.
         rows_1based: an integer array starting from 1 as the index of rows.
@@ -276,7 +494,8 @@ class ISSF_Exposure(dict):
             removes straylight from the data array. More work is needed for MethaneSAT straylight correction.
         
     """
-    def __init__(self,wavelength,data,nrow=None,ncol=None,power=None,int_time=None):
+    def __init__(self,wavelength,data,instrum=None,which_band=None,
+                 nrow=None,ncol=None,power=None,int_time=None):
         self.logger = logging.getLogger(__name__)
         # self.logger.info('creating an ISSF_Exposure instance')
         if nrow is None:
@@ -296,6 +515,8 @@ class ISSF_Exposure(dict):
         self.add('wavelength', wavelength)
         self.add('data', data)
         self.add('power',power)
+        self.add('instrum',instrum)
+        self.add('which_band',which_band)
         self.add('if_power_normalized',False)
         self.add('int_time',int_time)
         self.add('if_time_normalized',False)
