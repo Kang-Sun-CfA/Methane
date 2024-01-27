@@ -328,21 +328,21 @@ class Straylight_Kernel():
         nc.setncatts(ncattr_dict)
         
         nc.createDimension('cdim',len(self.centered_c_grid_coarse))
-        var_centered_c_grid = nc.createVariable('centered_c_grid_coarse',np.float,('cdim',))
+        var_centered_c_grid = nc.createVariable('centered_c_grid_coarse',float,('cdim',))
         var_centered_c_grid.long_name = 'Centered column grid'
         var_centered_c_grid[:] = self.centered_c_grid_coarse
         
         nc.createDimension('rdim',len(self.centered_r_grid_coarse))
-        var_centered_r_grid = nc.createVariable('centered_r_grid_coarse',np.float,('rdim',))
+        var_centered_r_grid = nc.createVariable('centered_r_grid_coarse',float,('rdim',))
         var_centered_r_grid.long_name = 'Centered row grid'
         var_centered_r_grid[:] = self.centered_r_grid_coarse
         
-        var_peak_kernel = nc.createVariable('peak_kernel',np.float,('rdim','cdim'))  
+        var_peak_kernel = nc.createVariable('peak_kernel',float,('rdim','cdim'))  
         var_peak_kernel.long_name = 'Peak straylight kernel'
         var_peak_kernel[:] = self.peak_kernel
         
         if self.instrum=='MethaneSAT':
-            var_ghost_kernel = nc.createVariable('ghost_kernel',np.float,('rdim','cdim'))
+            var_ghost_kernel = nc.createVariable('ghost_kernel',float,('rdim','cdim'))
             var_ghost_kernel.long_name = 'Ghost straylight kernel'
             var_ghost_kernel[:] = self.ghost_kernel
             
@@ -573,14 +573,14 @@ class ISSF_Exposure(dict):
         else:
             if nrow != data.shape[0]:
                 self.logger.error('row dimension inconsistent')
-        self.add('rows_1based',np.arange(1,nrow+1,dtype=np.int))
+        self.add('rows_1based',np.arange(1,nrow+1,dtype=int))
         self.add('nrow',int(nrow))
         if ncol is None:
             ncol = data.shape[1]
         else:
             if ncol!= data.shape[1]:
                 self.logger.error('column dimension inconsistent')
-        self.add('cols_1based',np.arange(1,ncol+1,dtype=np.int))
+        self.add('cols_1based',np.arange(1,ncol+1,dtype=int))
         self.add('ncol',int(ncol))
         self.add('wavelength', wavelength)
         self.add('data', data)
@@ -856,7 +856,7 @@ class Central_Wavelength(list):
         peak_cols = np.array([np.argmax(np.nanmean(a['data'],axis=0)) for a in self])+1
         start_col = np.max([1,peak_cols.min()-pix_ext])
         end_col = np.min([self.ncol,peak_cols.max()+pix_ext])
-        use_cols_1based = np.arange(start_col,end_col+1,dtype=np.int)
+        use_cols_1based = np.arange(start_col,end_col+1,dtype=int)
         issf_reduced_data = np.array([a['data']
                                       [np.ix_(np.searchsorted(a['rows_1based'],use_rows_1based),\
                                               np.searchsorted(a['cols_1based'],use_cols_1based))] for a in self])
@@ -890,7 +890,7 @@ class Central_Wavelength(list):
         peak_cols = np.array([np.argmax(np.nanmean(a['data'],axis=0)) for a in self])+1
         start_col = np.max([1,peak_cols.min()-pix_ext])
         end_col = np.min([self.ncol,peak_cols.max()+pix_ext])
-        use_cols_1based = np.arange(start_col,end_col+1,dtype=np.int)
+        use_cols_1based = np.arange(start_col,end_col+1,dtype=int)
         issf_reduced_data = np.array([a['data']
                                       [np.ix_(np.searchsorted(a['rows_1based'],use_rows_1based),\
                                               np.searchsorted(a['cols_1based'],use_cols_1based))] for a in self])
@@ -1424,7 +1424,7 @@ class Multiple_ISRFs():
         cp1 = center_pix.copy()
         cp1[np.abs(center_pix-center_pix_smooth)>0.03] = center_pix_smooth[np.abs(center_pix-center_pix_smooth)>0.03]
         center_pix_smooth = median_filter(cp1,size=(mwindow,1))
-        wavcal_poly = np.full((self.shape[0],n_wavcal_poly+1),np.nan,dtype=np.float)
+        wavcal_poly = np.full((self.shape[0],n_wavcal_poly+1),np.nan,dtype=float)
         for irow in range(self.shape[0]):
             if self.row_mask[irow]:
                 continue
@@ -1484,7 +1484,7 @@ class Multiple_ISRFs():
             pp = np.polyfit(xdata,ydata,1)
             yhat = np.polyval(pp,center_pix_median2)
             center_pix_smooth[:,iw] = yhat
-        wavcal_poly = np.full((self.shape[0],n_wavcal_poly+1),np.nan,dtype=np.float)
+        wavcal_poly = np.full((self.shape[0],n_wavcal_poly+1),np.nan,dtype=float)
         for irow in range(self.shape[0]):
             if self.row_mask[irow]:
                 continue
@@ -1813,28 +1813,28 @@ class Multiple_ISRFs():
         nc.createDimension('ground_pixel',self.shape[0])
         nc.createDimension('polynomial',self.n_wavcal_poly+1)
         
-        var_isrf_dw = nc.createVariable('delta_wavelength',np.float,('delta_wavelength',))
+        var_isrf_dw = nc.createVariable('delta_wavelength',float,('delta_wavelength',))
         var_isrf_dw.units = 'nm'
         var_isrf_dw.long_name = 'wavelength grid of ISRF'
         var_isrf_dw[:] = self.dw_grid
         
-        var_isrf_w = nc.createVariable('central_wavelength',np.float,('central_wavelength',))
+        var_isrf_w = nc.createVariable('central_wavelength',float,('central_wavelength',))
         var_isrf_w.units = 'nm'
         var_isrf_w.long_name = 'wavelength grid where ISRF was measured'
         var_isrf_w[:] = self.central_wavelengths
         
-        var_isrf = nc.createVariable('isrf',np.float,('ground_pixel','central_wavelength','delta_wavelength'))
+        var_isrf = nc.createVariable('isrf',np.float32,('ground_pixel','central_wavelength','delta_wavelength'))
         var_isrf.units = 'nm^-1'
         var_isrf.long_name = 'ISRF'
         var_isrf[:] = self.isrf_data
         
         if hasattr(self,'filled_mask'):
-            var_mask = nc.createVariable('filled_mask',np.int,('ground_pixel','central_wavelength'))
+            var_mask = nc.createVariable('filled_mask',int,('ground_pixel','central_wavelength'))
             var_mask.units = 'T/F'
             var_mask.long_name = '1-filled,0-not filled'
             var_mask[:] = self.filled_mask
         
-        var_wavcal = nc.createVariable('pix2nm_polynomial',np.float,('ground_pixel','polynomial'))
+        var_wavcal = nc.createVariable('pix2nm_polynomial',float,('ground_pixel','polynomial'))
         var_wavcal.long_name = 'wavelength calibration coefficients, starting from intercept'
         var_wavcal[:] = self.wavcal_poly
         
