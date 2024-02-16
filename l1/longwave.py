@@ -11,7 +11,7 @@ import numpy as np
 from matplotlib import pyplot as plt
 import logging
 logging.basicConfig(level=logging.INFO)
-from scipy.interpolate import RegularGridInterpolator
+from scipy.interpolate import RegularGridInterpolator, interp1d
 import sys,os,glob
 # In this "robust" version of arange the grid doesn't suffer 
 # from the shift of the nodes due to error accumulation.
@@ -69,11 +69,18 @@ def F_interp_absco(absco_P,absco_T,absco_B,absco_w,absco_sigma,
     func = RegularGridInterpolator((aP,T_grid,absco_B,absco_w), sigma_grid)
     return func((Pq,Tq,Bq,wq))
 
+def F_get_dry_air_density(P_Pa,T_K,B_H2OVMR):
+    '''calculate dry air density in molec/cm3 given P, T, water vapor dry air vmr'''
+    return P_Pa/(1+B_H2OVMR)/T_K/1.38064852e-23*1e-6
+
 class Longwave_Emitter(object):
     def __init__(self,start_w,end_w,gas_names,
                  absco_path_pattern='/home/kangsun/N2O/n2o_run/data/splat_data/SAO_crosssections/splatv2_xsect/HITRAN2020_*_4500-4650nm_0p00_0p002dw.nc',
                  profile_path='/home/kangsun/N2O/n2o_run/data/additional_inputs/test_profile.nc',
                  radiance_unit='photons/s/cm2/sr/nm'):
+        '''
+        the profiles go from surface to toa, opposite from splat profiles
+        '''
         self.logger = logging.getLogger(__name__)
         self.start_w = start_w
         self.end_w = end_w
@@ -102,31 +109,50 @@ class Longwave_Emitter(object):
         profiles = {}
         self.logger.info(f'loading {profile_path}')
         with Dataset(profile_path,'r') as nc:
-            profiles['P_level'] = nc['pedge'][:].squeeze().filled(np.nan)
-            profiles['T_level'] = nc['Tedge'][:].squeeze().filled(np.nan)
+            profiles['P_level'] = nc['pedge'][:].squeeze().filled(np.nan)[::-1]
+            profiles['T_level'] = nc['Tedge'][:].squeeze().filled(np.nan)[::-1]
             for gas in gas_names:
-                profiles[gas] = nc[gas][:].squeeze().filled(np.nan)
+                profiles[gas] = nc[gas][:].squeeze().filled(np.nan)[::-1]
             if 'H2O' not in gas_names:
-                profiles['H2O'] = nc['H2O'][:].squeeze().filled(np.nan)
-        profiles['P_layer'] = np.nanmean(
-            np.column_stack(
-                (profiles['P_level'][:-1],profiles['P_level'][1:])),1)
-        profiles['T_layer'] = np.nanmean(
-            np.column_stack(
-                (profiles['T_level'][:-1],profiles['T_level'][1:])),1)
+                profiles['H2O'] = nc['H2O'][:].squeeze().filled(np.nan)[::-1]
+        
         # somehow there is no alitutde in the test_profile.nc file
         profiles['z_level'] = np.array([80.0,60.0,55.0,50.0,47.5,45.0,42.5,40.0,\
                                37.5,35.0,32.5,30.0,27.5,25.0,24.0,23.0,\
                                22.0,21.0,20.0,19.0,18.0,17.0,16.0,15.0,\
                                14.0,13.0,12.0,11.0,10.0,9.0,8.0,7.0,6.0,\
-                               5.0,4.0,3.0,2.0,1.0,0.0])
-        profiles['dz'] = np.abs(profiles['z_level'][:-1]-profiles['z_level'][1:])
+                               5.0,4.0,3.0,2.0,1.0,0.0])[::-1]
+        profiles['dz'] = np.abs(profiles['z_level'][1:]-profiles['z_level'][:-1])
+        profiles['air_density'] = np.zeros(profiles['dz'].shape,dtype=np.float64)
         self.profiles = profiles
+        self.level2layer(keys=['P','T','z'])
         self.nlevel = len(profiles['P_level'])
-        self.nlayer = len(profiles['P_layer'])
+        self.nlayer = self.nlevel-1
+        for ilayer in range(self.nlayer):
+            P = self.profiles['P_layer'][ilayer]*100.# hPa to Pa
+            T = self.profiles['T_layer'][ilayer]
+            B = self.profiles['H2O'][ilayer]
+            # air density in molec/cm3
+            self.profiles['air_density'][ilayer] = F_get_dry_air_density(P,T,B)
+    
+    def level2layer(self,keys=None):
+        '''
+        level to layer for pressure, temperature, and altitude. assuming layer P
+        averged from levels, then interpolate T/z at layer P
+        '''
+        keys = keys or ['P','T','z']
+        for k in keys:
+            if k == 'P':
+                self.profiles['P_layer'] = np.nanmean(
+                    np.column_stack(
+                        (self.profiles['P_level'][:-1],self.profiles['P_level'][1:])),1)
+            else:
+                f = interp1d(self.profiles['P_level'],self.profiles[f'{k}_level'])
+                self.profiles[f'{k}_layer'] = f(self.profiles['P_layer'])
     
     def get_profile_jacobian(self,key,finite_difference=True,fd_delta=None,
-                             fd_relative_delta=None,get_radiance_kw=None):
+                             fd_relative_delta=None,vza=0.,Ts=None,emissivity=None,
+                             wrt='mixing ratio'):
         ''' 
         key:
             a key name in self.profile
@@ -137,36 +163,96 @@ class Longwave_Emitter(object):
         fd_relative_delta:
             relative delta value used in finite difference. ignored if fd_delta
             is provided
-        get_radiance_kw:
-            keyword arguements to self.get_radiance
+        vza, Ts, emissivity:
+            arguements to self.get_radiance
+        wrt:
+            gas jacobian with respect to 'mixing ratio', 'number density', or 
+            'optical depth'
         '''
         if finite_difference:
             profile_c = self.profiles[key].copy()
+            if key == 'T_level':
+                profile_layer_c = self.profiles['T_layer'].copy()  
+                nz = self.nlevel
+            else:
+                nz = self.nlayer
             if fd_delta is None and fd_relative_delta is None:
                 self.logger.warning('a relative fd_relative_delta of 0.001 is assumed')
                 fd_relative_delta = 1e-3
             if fd_delta is None and fd_relative_delta is not None:
-                fd_delta = np.ones_like(profile_c)*fd_relative_delta
+                fd_delta = profile_c*fd_relative_delta
             profile_l = profile_c-fd_delta/2.
             profile_r = profile_c+fd_delta/2.
-            if get_radiance_kw is None:
-                get_radiance_kw = dict(vza=0)
-            jac = np.full((len(self.w1),self.nlayer),np.nan)
-            for ilayer in range(self.nlayer):
-                self.profiles[key][ilayer] = profile_l[ilayer]
+            jac = np.full((len(self.w1),nz),np.nan)
+            for iz in range(nz):
+                self.profiles[key][iz] = profile_l[iz]
+                if key == 'T_level':
+                    self.level2layer(keys=['T'])
                 self.get_sigmas()
-                r_l = self.get_radiance(**get_radiance_kw)
-                self.profiles[key][ilayer] = profile_r[ilayer]
+                r_l = self.get_radiance(vza=vza,Ts=Ts,emissivity=emissivity)
+                self.profiles[key][iz] = profile_r[iz]
+                if key == 'T_level':
+                    self.level2layer(keys=['T'])
                 self.get_sigmas()
-                r_r = self.get_radiance(**get_radiance_kw)
-                jac[:,ilayer] = (r_r-r_l)/fd_delta[ilayer]
+                r_r = self.get_radiance(vza=vza,Ts=Ts,emissivity=emissivity)
+                jac[:,iz] = (r_r-r_l)/fd_delta[iz]
+            # reset profiles and tau to original values (without perturbations)
             self.profiles[key] = profile_c.copy()
+            if key == 'T_level':
+                self.profiles['T_layer'] = profile_layer_c.copy()
             self.get_sigmas()
         else:
-            if key == 'T_layer':
+            if key in ['T_level','T_layer']:
                 self.logger.error('not implemented')
                 return
+            self.get_sigmas()
+            jac = np.full((len(self.w1),self.nlayer),np.nan)
+            if Ts is None:
+                Ts = self.profiles['T_level'][np.argmin(self.profiles['z_level'])]
+            if emissivity is None:
+                emissivity = 1.
+            mu = np.cos(vza/180*np.pi)
+            radiance_unit = self.radiance_unit
+            # surface planck function
+            Bs = BB(Ts,self.w1,radiance_unit)
+            # planck function for layer and level temperatures, sfc->toa
+            B_level = np.zeros((self.nlevel,len(self.w1)))
+            B_layer = np.zeros((self.nlayer,len(self.w1)))
+            for ilevel in range(self.nlevel):
+                B_level[ilevel,] = BB(self.profiles['T_level'][ilevel],self.w1,radiance_unit)
+            for ilayer in range(self.nlayer):
+                B_layer[ilayer,] = BB(self.profiles['T_layer'][ilayer],self.w1,radiance_unit)
+            # slant optical thickness, sfc->toa
+            dtau_layer_mu = self.dtau_layer/mu
+            # cumulative slant optical thickness at levels, sfc->toa
+            tau_level_mu = np.concatenate(
+                (np.zeros((1,len(self.w1))),np.cumsum(dtau_layer_mu,axis=0)),axis=0)
+            # B_tau is the the effective Planck function varying from B_layer in the 
+            # optically thin regime to B_level[1:,] in the optically thick regime.
+            # see Eq. 16 in https://doi.org/10.1029/92JD01419
+            a_pade2 = 0.193; b_pade2 = 0.013;
+            upper_weight = a_pade2*dtau_layer_mu+b_pade2*dtau_layer_mu**2
+            B_tau = (B_layer+upper_weight*B_level[1:,])/(1+upper_weight)
+            dB_dtau = (B_level[1:,]-B_layer)*(a_pade2+2*b_pade2*dtau_layer_mu)/\
+                np.square(1+upper_weight)
             
+            for ilayer in range(self.nlayer):
+                jac[:,ilayer] = -Bs*np.exp(-tau_level_mu[-1,])+\
+                    (np.exp(-dtau_layer_mu[ilayer,])*B_tau[ilayer,]+\
+                     (1-np.exp(-dtau_layer_mu[ilayer,]))*dB_dtau[ilayer,])*\
+                        np.exp(tau_level_mu[ilayer+1,]-tau_level_mu[-1,])
+                if ilayer > 0:
+                    jac[:,ilayer] -= np.nansum((1-np.exp(-dtau_layer_mu[:ilayer,]))\
+                               *B_tau[:ilayer,]\
+                               *np.exp(tau_level_mu[1:ilayer+1,]-tau_level_mu[-1,])\
+                               ,axis=0)
+                if wrt in ['mixing ratio']:
+                    jac[:,ilayer] *= self.sigmas[key][ilayer,]*\
+                        self.profiles['dz'][ilayer]*1e5/mu*\
+                            self.profiles['air_density'][ilayer]
+                elif wrt in ['number density']:
+                    jac[:,ilayer] *= self.sigmas[key][ilayer,]*\
+                        self.profiles['dz'][ilayer]*1e5/mu
         return jac
     
     def get_sigmas(self):
@@ -180,7 +266,7 @@ class Longwave_Emitter(object):
             B = self.profiles['H2O'][ilayer]
             dz = self.profiles['dz'][ilayer]*1e5 # km to cm
             # air density in molec/cm3
-            air_density = P/T/1.38064852e-23*1e-6
+            air_density = self.profiles['air_density'][ilayer]
             for gas in self.gas_names:
                 sigmas[gas][ilayer,] = F_interp_absco(self.abscos[gas]['absco_P'], 
                                              self.abscos[gas]['absco_T'], 
@@ -206,12 +292,9 @@ class Longwave_Emitter(object):
             self.profiles[key] = np.ones_like(self.profiles[key])*absolute_value
         dtau_layer = np.zeros((self.nlayer,len(self.w1)))
         for ilayer in range(self.nlayer):
-            P = self.profiles['P_layer'][ilayer]*100.# hPa to Pa
-            T = self.profiles['T_layer'][ilayer]
-            B = self.profiles['H2O'][ilayer]
             dz = self.profiles['dz'][ilayer]*1e5 # km to cm
             # air density in molec/cm3
-            air_density = P/T/1.38064852e-23*1e-6
+            air_density = self.profiles['air_density'][ilayer]
             for gas in self.gas_names:
                 # gas density in molec/cm3
                 gas_density = air_density*self.profiles[gas][ilayer]
@@ -238,10 +321,8 @@ class Longwave_Emitter(object):
             B_level[ilevel,] = BB(self.profiles['T_level'][ilevel],self.w1,radiance_unit)
         for ilayer in range(self.nlayer):
             B_layer[ilayer,] = BB(self.profiles['T_layer'][ilayer],self.w1,radiance_unit)
-        B_level = B_level[::-1,]
-        B_layer = B_layer[::-1,]
         # slant optical thickness, sfc->toa
-        dtau_layer_mu = self.dtau_layer[::-1,]/mu
+        dtau_layer_mu = self.dtau_layer/mu
         # cumulative slant optical thickness at levels, sfc->toa
         tau_level_mu = np.concatenate(
             (np.zeros((1,len(self.w1))),np.cumsum(dtau_layer_mu,axis=0)),axis=0)
@@ -252,11 +333,11 @@ class Longwave_Emitter(object):
         upper_weight = a_pade2*dtau_layer_mu+b_pade2*dtau_layer_mu**2
         B_tau = (B_layer+upper_weight*B_level[1:,])/(1+upper_weight)
         # radiance as of https://doi.org/10.1029/92JD01419
-        radiance = Bs*np.exp(-np.nansum(dtau_layer_mu,axis=0))\
+        radiance = Bs*np.exp(-tau_level_mu[-1,:])\
             +np.nansum((1-np.exp(-dtau_layer_mu))\
                        *B_tau\
                        *np.exp(tau_level_mu[1:,]-tau_level_mu[-1,])\
                        ,axis=0)
-        self.B_level = B_level[::-1,]
+        self.B_level = B_level
         self.Bs = Bs
         return radiance
