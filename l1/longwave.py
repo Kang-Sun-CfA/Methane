@@ -106,11 +106,28 @@ def F_level2layer(profiles):
     f = interp1d(profiles['P_level'],profiles['z_level_calc'])
     profiles['z_layer_calc'] = f(profiles['P_layer'])
     return profiles
-    
+
+def F_noise_model(radiance,dw,nsample,dt,dp,f_number,system_efficiency,readout_e,
+                  radiance_unit='photons/s/cm2/sr/nm'):
+    rus = radiance_unit.split(' ')
+    if len(rus) == 1:
+        factor = 1.
+        unit = rus[0]
+    elif len(rus) == 2:
+        factor = float(rus[0])
+        unit = rus[1]
+    # signal electrons
+    S = np.pi/4*nsample*(factor*radiance)*dt*dw*(dp/f_number)**2*system_efficiency
+    # noise electrons
+    N = np.sqrt(S+readout_e**2)
+    SNR = S/N
+    return SNR
+
 class Longwave(object):
     def __init__(self,start_w,end_w,gas_names,
                  vza=0.,Ts=None,TC=0.,emissivity=1.,
                  dw=0.1,nsample=3,hw1e=None,
+                 dt=0.1,dp=18e-4,f_number=2,system_efficiency=0.5,readout_e=60,
                  absco_path_pattern='/home/kangsun/N2O/n2o_run/data/splat_data/SAO_crosssections/splatv2_xsect/HITRAN2020_*_4500-4650nm_0p00_0p002dw.nc',
                  profile_path='/home/kangsun/N2O/n2o_run/data/additional_inputs/test_profile.nc',
                  radiance_unit='1e14 photons/s/cm2/sr/nm'):
@@ -143,6 +160,11 @@ class Longwave(object):
         self.dw = dw
         self.hw1e = hw1e
         self.nsample = nsample
+        self.dt = dt
+        self.dp = dp
+        self.f_number = f_number
+        self.system_efficiency = system_efficiency
+        self.readout_e = readout_e
         abscos = {}
         for igas,gas in enumerate(gas_names):
             absco_fn = absco_path_pattern.replace('*',gas)
@@ -251,6 +273,13 @@ class Longwave(object):
             f = interp1d(self.w1, convolve_fft(self.get_radiance(),ILS,normalize_kernel=True),
                          bounds_error=False,fill_value='extrapolate')
             jacs['Radiance'] = f(w2)
+        self.logger.info('calculating radiance error')
+        SNR = F_noise_model(jacs['Radiance'],self.dw,self.nsample,
+                            self.dt,self.dp,self.f_number,
+                            self.system_efficiency,self.readout_e,
+                            self.radiance_unit)
+        jacs['SNR'] = SNR
+        jacs['Radiance_error'] = jacs['Radiance']/SNR
         self.jacs = jacs
     
     def get_profile_jacobian(self,key,finite_difference=True,fd_delta=None,
@@ -450,10 +479,12 @@ class Longwave(object):
 class Shortwave(object):
     def __init__(self,start_w,end_w,gas_names,sza=30.,vza=0.,
                  dw=0.1,nsample=3,hw1e=None,
+                 dt=0.1,dp=18e-4,f_number=2,system_efficiency=0.5,readout_e=60,
                  splat_path='/home/kangsun/N2O/sci-level2-splat/build/splat.exe',
                  control_template_path='/home/kangsun/N2O/n2o_run/control/forward_template.control',
                  working_dir='/home/kangsun/N2O/n2o_run',
-                 profile_path='/home/kangsun/N2O/n2o_run/data/additional_inputs/test_profile.nc'):
+                 profile_path='/home/kangsun/N2O/n2o_run/data/additional_inputs/test_profile.nc',
+                 radiance_unit='1e14 photons/s/cm2/sr/nm'):
         '''
         splat_path:
             path of splat.exe
@@ -473,6 +504,12 @@ class Shortwave(object):
         self.dw = dw
         self.hw1e = hw1e
         self.nsample = nsample
+        self.dt = dt
+        self.dp = dp
+        self.f_number = f_number
+        self.system_efficiency = system_efficiency
+        self.readout_e = readout_e
+        self.radiance_unit = radiance_unit
         self.gas_names = gas_names
         self.splat_path = splat_path
         self.working_dir = working_dir
@@ -508,13 +545,12 @@ class Shortwave(object):
             self.profiles['air_density'][ilayer] = F_get_dry_air_density(P,T,B)
                 
     def get_jacobians(self,keys=None,keynames=None,finite_difference=False,delete_nc=False,
-                      if_convolve=True,
+                      if_convolve=True,wrt='relative mixing ratio',
                      **kwargs):
         jacs = {}
         keys = keys or ['RTM_Band1/Radiance_I']+\
             [f'RTM_Band1/{g.upper()}_TraceGasJacobian_I' for g in self.gas_names]
-        keynames = keynames or [k.split('/')[-1] for k in keys]
-        
+        keynames = keynames or ['Radiance']+self.gas_names
         if finite_difference:
             pass
         else:
@@ -551,13 +587,25 @@ class Shortwave(object):
                                 jac[i,] = nc[k][i,mask,0,0].filled(np.nan)
                         # make profile jacobians go from sfc to toa
                         jac = jac[::-1,]
+                        if wrt in ['mixing ratio']:
+                            self.logger.info('converting c*dI/dc to dI/dc using mixing ratios in self.profiles')
+                            jac /= self.profiles[kn][:,np.newaxis]
                         jacs[kn] = jac
             jacs['Wavelength'] = w2
+            if 'Radiance' in jacs.keys():
+                self.logger.info('calculating radiance error')
+                SNR = F_noise_model(jacs['Radiance'],self.dw,self.nsample,
+                                    self.dt,self.dp,self.f_number,
+                                    self.system_efficiency,self.readout_e,
+                                    self.radiance_unit)
+                jacs['SNR'] = SNR
+                jacs['Radiance_error'] = jacs['Radiance']/SNR
+            else:
+                self.logger.warning('Radiance not found in jacs. no error calculation')
             self.jacs = jacs
             if delete_nc:
                 os.remove(self.output_path)
-        
-    
+         
     def run_splat(self,control_path=None,control_template_path=None,
                   output_path=None,profile_path=None,rerun_splat=True,
                   **kwargs):
@@ -585,6 +633,7 @@ class Shortwave(object):
         varlst['splat_data_dir'] = kwargs.pop('splat_data_dir','data/splat_data/')
         varlst['atmosphere_apriori_file'] = os.path.relpath(profile_path,self.working_dir)
         if not rerun_splat:
+            self.logger.info('won\'t run splat, using {} directly!'.format(self.output_path))
             return
         with open(control_template_path,'r') as template_f:
             ctrl = template_f.read()
@@ -598,5 +647,82 @@ class Shortwave(object):
     def run(self,control_path):
         cwd = os.getcwd()
         os.chdir(self.working_dir)
+        self.logger.info(f'running splat using {control_path}')
         os.system(f'{self.splat_path} {control_path}')
         os.chdir(cwd)
+
+
+class LSA(object):
+    def __init__(self,objs,state_dicts):
+        '''
+        objs:
+            a list of Longwave/Shortwave objects
+        state_dicts:
+            a list of state vector dicts for retrieval. may include
+            -name, name mapped to one key in obj.jacs.keys()
+        '''
+        self.logger = logging.getLogger(__name__)
+        masks = [(obj.jacs['Wavelength']>=obj.start_w) &
+                 (obj.jacs['Wavelength']<=obj.end_w) &
+                 (~np.isnan(obj.jacs['Radiance'])) for obj in objs]
+        self.radiance_error = np.concatenate([obj.jacs['Radiance_error'][mask] for obj,mask in zip(objs,masks)])
+        self.radiance = np.concatenate([obj.jacs['Radiance'][mask] for obj,mask in zip(objs,masks)])
+        self.SNR = np.concatenate([obj.jacs['SNR'][mask] for obj,mask in zip(objs,masks)])
+        ny = np.sum([np.sum(mask) for mask in masks])
+        air_col = objs[0].profiles['air_density'] * objs[0].profiles['dz']*1e5 # molec/cm2
+        self.h = air_col/np.sum(air_col)
+        state_count = 0
+        for state_dict in state_dicts:
+            avails = np.array([state_dict['name'] in obj.jacs.keys() for obj in objs])
+            if not np.sum(avails):
+                self.logger.error('{} is not in any jacs!'.format(state_dict['name']))
+            jac_created = False
+            for i,(obj,avail,mask) in enumerate(zip(objs,avails,masks)):
+                if i == 0:
+                    start_idx = 0
+                else:
+                    start_idx = np.sum([len(mask) for mask in masks[0:i]])
+                if avail and not jac_created:
+                    nstate = obj.jacs[state_dict['name']].shape[0]
+                    prior_error_matrix = np.diag(state_dict['prior_error']**2)
+                    if 'correlation_length' in state_dict.keys():
+                        for iz,(ape_i,z_i) in enumerate(zip(state_dict['prior_error'],state_dict['z'])):
+                            for jz,(ape_j,z_j) in enumerate(zip(state_dict['prior_error'],state_dict['z'])):
+                                if iz == jz:continue
+                                prior_error_matrix[iz,jz] = \
+                                    ape_i*ape_j*np.exp(-np.abs(z_i-z_j)/state_dict['correlation_length'])
+                    jac = np.zeros((ny,nstate))
+                    jac_created = True
+                if avail:
+                    jac[start_idx:start_idx+len(mask),] = obj.jacs[state_dict['name']][:,mask].T
+            state_dict['jac'] = jac
+            state_dict['nstate'] = nstate
+            state_dict['state_start_idx'] = state_count
+            state_count += nstate
+            state_dict['prior_error_matrix'] = prior_error_matrix
+            
+        self.state_dicts = state_dicts
+        self.state_names = np.array([d['name'] for d in state_dicts])
+    
+    def retrieve(self):
+        nstates = np.sum([d['nstate'] for d in self.state_dicts])
+        K = np.concatenate([d['jac'] for d in self.state_dicts],axis=1)
+        Sa = np.zeros((nstates,nstates))
+        count = 0
+        for d in self.state_dicts:
+            Sa[count:count+d['nstate'],count:count+d['nstate']] = d['prior_error_matrix']
+            count += d['nstate']
+        Sy = np.diag(np.square(self.radiance_error))
+        G = Sa@K.T@np.linalg.inv(K@Sa@K.T+Sy)
+        A = G@K
+        Shat = np.linalg.inv(K.T@np.linalg.inv(Sy)@K+np.linalg.inv(Sa))
+        self.Sa = Sa
+        self.G = G
+        self.A = A
+        self.Shat = Shat
+        for state_dict in self.state_dicts:
+            if len(self.h) != state_dict['nstate']:continue
+            Shat_block = Shat[state_dict['state_start_idx']:state_dict['state_start_idx']+state_dict['nstate'],
+                              state_dict['state_start_idx']:state_dict['state_start_idx']+state_dict['nstate']]
+            self.logger.info('calculating error of X{}'.format(state_dict['name']))
+            state_dict['X{}_error'.format(state_dict['name'])] = np.sqrt(self.h@Shat_block@self.h)
