@@ -25,6 +25,18 @@ def arange_(lower,upper,step,dtype=None):
         npnt += 1
     return np.linspace(lower,upper_new,int(npnt),dtype=dtype)
 
+def F_center2edge(lon,lat):
+    '''
+    function to shut up complain of pcolormesh like 
+    MatplotlibDeprecationWarning: shading='flat' when X and Y have the same dimensions as C is deprecated since 3.3.
+    create grid edges from grid centers
+    '''
+    res=np.mean(np.diff(lon))
+    lonr = np.append(lon-res/2,lon[-1]+res/2)
+    res=np.mean(np.diff(lat))
+    latr = np.append(lat-res/2,lat[-1]+res/2)
+    return lonr,latr
+
 def BB(T_K,w_nm,radiance_unit='photons/s/cm2/sr/nm',
        c=2.99792458e8,h=6.62607004e-34,kB=1.38064852e-23):
     '''
@@ -124,47 +136,21 @@ def F_noise_model(radiance,dw,nsample,dt,dp,f_number,system_efficiency,readout_e
     return SNR
 
 class Longwave(object):
+    '''class representing a band in the longwave. Custom RTM based on EPS237'''
     def __init__(self,start_w,end_w,gas_names,
-                 vza=0.,Ts=None,TC=0.,emissivity=1.,
-                 dw=0.1,nsample=3,hw1e=None,
-                 dt=0.1,dp=18e-4,f_number=2,system_efficiency=0.5,readout_e=60,
                  absco_path_pattern='/home/kangsun/N2O/n2o_run/data/splat_data/SAO_crosssections/splatv2_xsect/HITRAN2020_*_4500-4650nm_0p00_0p002dw.nc',
-                 profile_path='/home/kangsun/N2O/n2o_run/data/additional_inputs/test_profile.nc',
-                 radiance_unit='1e14 photons/s/cm2/sr/nm'):
+                 ):
         '''
         start/end_w:
             start/end wavelength of the sensor in nm
         gas_names:
             list of gas names, e.g.,['N2O']
-        vza:
-            viewing zenith angle in degree
-        Ts:
-            surface temperature in K. if none, use bottom level temperature
-        TC:
-            surface temperature - lowest atmospheric level temperature
-        emissivity:
-            surface emissivity
-        dw:
-            sensor spectral sampling in nm
-        nsample:
-            slit width/ILS FWHM as multiple of dw
-        hw1e:
-            gaussian half widith at 1/e. if none, calculate as dw*nsample/1.665109
         '''
         self.logger = logging.getLogger(__name__)
         self.start_w = start_w
         self.end_w = end_w
         self.gas_names = gas_names
-        self.radiance_unit = radiance_unit
-        hw1e = hw1e or dw*nsample/1.665109
-        self.dw = dw
-        self.hw1e = hw1e
-        self.nsample = nsample
-        self.dt = dt
-        self.dp = dp
-        self.f_number = f_number
-        self.system_efficiency = system_efficiency
-        self.readout_e = readout_e
+        
         abscos = {}
         for igas,gas in enumerate(gas_names):
             absco_fn = absco_path_pattern.replace('*',gas)
@@ -185,7 +171,41 @@ class Longwave(object):
             else:
                 if not np.array_equal(self.w1, absco_w):
                     self.logger.warning(f'wavelength grid of {gas} differs from {gas_names[0]}')
-        self.abscos = abscos
+        self.logger.info('absco at {:.3f}-{:.3f} nm, sampling at {:.3f} nm'.format(absco_w.min(),absco_w.max(),self.dw1))
+        self.abscos = abscos   
+    
+    def set_property(self,vza=0.,Ts=None,TC=0.,emissivity=1.,
+                     dw=0.1,nsample=3,hw1e=None,
+                     dt=0.1,dp=18e-4,f_number=2,system_efficiency=0.5,readout_e=60,
+                     profile_path='/home/kangsun/N2O/n2o_run/data/additional_inputs/test_profile.nc',
+                     radiance_unit='1e14 photons/s/cm2/sr/nm'):
+        '''update property without reloading absco tables, which is slow
+        vza:
+            viewing zenith angle in degree
+        Ts:
+            surface temperature in K. if none, use bottom level temperature
+        TC:
+            surface temperature - lowest atmospheric level temperature
+        emissivity:
+            surface emissivity
+        dw:
+            sensor spectral sampling in nm
+        nsample:
+            slit width/ILS FWHM as multiple of dw
+        hw1e:
+            gaussian half widith at 1/e. if none, calculate as dw*nsample/1.665109
+        '''
+        self.radiance_unit = radiance_unit
+        hw1e = hw1e or dw*nsample/1.665109
+        self.dw = dw
+        self.hw1e = hw1e
+        self.nsample = nsample
+        self.dt = dt
+        self.dp = dp
+        self.f_number = f_number
+        self.system_efficiency = system_efficiency
+        self.readout_e = readout_e
+        gas_names = self.gas_names
         profiles = {}
         self.logger.info(f'loading {profile_path}')
         # the profiles go from surface to toa, opposite from splat profiles
@@ -234,6 +254,19 @@ class Longwave(object):
                 f = interp1d(self.profiles['P_level'],self.profiles[f'{k}_level'])
                 self.profiles[f'{k}_layer'] = f(self.profiles['P_layer'])
     
+    def plot_jacobian(self,key,ax=None,vertical_coordinate='P_layer',
+                      **kwargs):
+        if ax is None:
+            fig,ax = plt.subplots(1,1,figsize=(10,5),constrained_layout=True)
+        else:
+            fig = None
+        ydata = self.profiles[vertical_coordinate]
+        xdata = self.jacs['Wavelength']
+        pc = ax.pcolormesh(*F_center2edge(xdata,ydata),self.jacs[key],**kwargs)
+        if vertical_coordinate=='P_layer':
+            ax.invert_yaxis()
+        return dict(fig=fig,ax=ax,pc=pc)
+    
     def get_jacobians(self,keys,if_convolve=True,
                       **kwargs):
         jacs = {}
@@ -266,7 +299,7 @@ class Longwave(object):
                     jacs[key][i,] = f(w2)
             else:
                 jacs[key] = jac
-        
+            self.logger.info('got {} jacobian with shape {}'.format(key,jacs[key].shape))
         if not if_convolve:
             jacs['Radiance'] = self.get_radiance()
         else:
@@ -284,7 +317,7 @@ class Longwave(object):
     
     def get_profile_jacobian(self,key,finite_difference=True,fd_delta=None,
                              fd_relative_delta=None,
-                             wrt='relative mixing ratio'):
+                             wrt='mixing ratio'):
         ''' 
         key:
             a key name in self.profile
@@ -477,6 +510,7 @@ class Longwave(object):
 
 
 class Shortwave(object):
+    '''class representing a band in the shortwave. Wrapping SPLAT'''
     def __init__(self,start_w,end_w,gas_names,sza=30.,vza=0.,
                  dw=0.1,nsample=3,hw1e=None,
                  dt=0.1,dp=18e-4,f_number=2,system_efficiency=0.5,readout_e=60,
@@ -543,10 +577,23 @@ class Shortwave(object):
             B = self.profiles['H2O'][ilayer]
             # air density in molec/cm3
             self.profiles['air_density'][ilayer] = F_get_dry_air_density(P,T,B)
-                
+    
+    def plot_jacobian(self,key,ax=None,vertical_coordinate='P_layer',
+                      **kwargs):
+        if ax is None:
+            fig,ax = plt.subplots(1,1,figsize=(10,5),constrained_layout=True)
+        else:
+            fig = None
+        ydata = self.profiles[vertical_coordinate]
+        xdata = self.jacs['Wavelength']
+        pc = ax.pcolormesh(*F_center2edge(xdata,ydata),self.jacs[key],**kwargs)
+        if vertical_coordinate=='P_layer':
+            ax.invert_yaxis()
+        return dict(fig=fig,ax=ax,pc=pc)
+    
     def get_jacobians(self,keys=None,keynames=None,finite_difference=False,delete_nc=False,
-                      if_convolve=True,wrt='relative mixing ratio',
-                     **kwargs):
+                      if_convolve=True,wrt='mixing ratio',
+                      **kwargs):
         jacs = {}
         keys = keys or ['RTM_Band1/Radiance_I']+\
             [f'RTM_Band1/{g.upper()}_TraceGasJacobian_I' for g in self.gas_names]
@@ -588,7 +635,7 @@ class Shortwave(object):
                         # make profile jacobians go from sfc to toa
                         jac = jac[::-1,]
                         if wrt in ['mixing ratio']:
-                            self.logger.info('converting c*dI/dc to dI/dc using mixing ratios in self.profiles')
+                            self.logger.info(f'converting c*dI/dc to dI/dc using {kn} mixing ratios in self.profiles')
                             jac /= self.profiles[kn][:,np.newaxis]
                         jacs[kn] = jac
             jacs['Wavelength'] = w2
@@ -643,6 +690,7 @@ class Shortwave(object):
                 f.write(ctrl)
         
         self.run(control_path)
+        self.logger.info(f'output saved at {output_path}')
     
     def run(self,control_path):
         cwd = os.getcwd()
@@ -719,10 +767,23 @@ class LSA(object):
         self.Sa = Sa
         self.G = G
         self.A = A
+        self.dofs = A.trace()
+        self.column_AVK = self.h@self.A/self.h
         self.Shat = Shat
+        # loop over state vector to calculate X{gas} error
         for state_dict in self.state_dicts:
             if len(self.h) != state_dict['nstate']:continue
             Shat_block = Shat[state_dict['state_start_idx']:state_dict['state_start_idx']+state_dict['nstate'],
                               state_dict['state_start_idx']:state_dict['state_start_idx']+state_dict['nstate']]
-            self.logger.info('calculating error of X{}'.format(state_dict['name']))
-            state_dict['X{}_error'.format(state_dict['name'])] = np.sqrt(self.h@Shat_block@self.h)
+            AVK_block = A[state_dict['state_start_idx']:state_dict['state_start_idx']+state_dict['nstate'],
+                              state_dict['state_start_idx']:state_dict['state_start_idx']+state_dict['nstate']]
+            
+            xerror = np.sqrt(self.h@Shat_block@self.h)
+            self.logger.info('X{} error is {:.3E}'.format(state_dict['name'],xerror))
+            state_dict['X{}_error'.format(state_dict['name'])] = xerror
+            
+            column_AVK = self.h@AVK_block/self.h
+            state_dict['{}_column_AVK'.format(state_dict['name'])] = column_AVK
+            state_dict['{}_AVK'.format(state_dict['name'])] = AVK_block
+            self.logger.info('{} DOFS is {:.3f}'.format(state_dict['name'],AVK_block.trace()))
+            self.logger.info('{} surface column AVK is {:.3f}'.format(state_dict['name'],column_AVK[0]))
