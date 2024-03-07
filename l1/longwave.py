@@ -770,10 +770,13 @@ class LSA(object):
         self.dofs = A.trace()
         self.column_AVK = self.h@self.A/self.h
         self.Shat = Shat
+        self.Sm = G@Sy@G.T
         # loop over state vector to calculate X{gas} error
         for state_dict in self.state_dicts:
             if len(self.h) != state_dict['nstate']:continue
             Shat_block = Shat[state_dict['state_start_idx']:state_dict['state_start_idx']+state_dict['nstate'],
+                              state_dict['state_start_idx']:state_dict['state_start_idx']+state_dict['nstate']]
+            Sm_block = self.Sm[state_dict['state_start_idx']:state_dict['state_start_idx']+state_dict['nstate'],
                               state_dict['state_start_idx']:state_dict['state_start_idx']+state_dict['nstate']]
             AVK_block = A[state_dict['state_start_idx']:state_dict['state_start_idx']+state_dict['nstate'],
                               state_dict['state_start_idx']:state_dict['state_start_idx']+state_dict['nstate']]
@@ -781,6 +784,10 @@ class LSA(object):
             xerror = np.sqrt(self.h@Shat_block@self.h)
             self.logger.info('X{} error is {:.3E}'.format(state_dict['name'],xerror))
             state_dict['X{}_error'.format(state_dict['name'])] = xerror
+            
+            xerror_m = np.sqrt(self.h@self.Sm@self.h)
+            self.logger.info('X{} measurement error is {:.3E}'.format(state_dict['name'],xerror_m))
+            state_dict['X{}_errorm'.format(state_dict['name'])] = xerror_m
             
             column_AVK = self.h@AVK_block/self.h
             state_dict['{}_column_AVK'.format(state_dict['name'])] = column_AVK
