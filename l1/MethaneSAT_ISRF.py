@@ -112,6 +112,123 @@ def F_stray_light_input(strayLightKernelPath,rowExtent=400,colExtent=400,
     strayLightKernel[np.ix_(centerRowFilter,centerColFilter)] = 0
     return strayLightKernel
 
+def F_stray_light_input_msat(strayLightKernelPath,rowExtents,colExtents,rowCenterMask,colCenterMask):
+    """
+    prepare straylight kernels for correction: define row/column extents; mask peak kernel center pixels; normalization
+    Parameters
+    strayLightKernelPath : str
+        path to the stray light deconvolution peak and ghost kernels
+    rowExtents : list of int
+        max row difference away from center (0) for peak and ghost kernels
+    colExtents : list of int
+        max column difference away from center (0) for peak and ghost kernels
+    rowCenterMask : int
+        +/-rowCenterMask rows of the peak kernel will be masked to be 0
+    colCenterMask : int
+        +/-colCenterMask columns of the peak kernel will be masked to be 0
+    Returns
+    peak_kernel : numpy array, 2D float 
+        straylight peak kernel
+    ghost_kernel : numpy array, 2D float 
+        straylight ghost kernel
+    """
+    d = F_ncread_selective(strayLightKernelPath,['centered_c_grid_coarse','centered_r_grid_coarse','peak_kernel','ghost_kernel'])
+    
+    # Define kernel extents
+    for (rowExtent,colExtent,kernel_type) in zip(rowExtents, colExtents, ['peak_kernel','ghost_kernel']):
+        rowFilter = (d['centered_r_grid_coarse'].squeeze() >= -np.abs(rowExtent)) & \
+        (d['centered_r_grid_coarse'].squeeze() <= np.abs(rowExtent))
+        colFilter = (d['centered_c_grid_coarse'].squeeze() >= -np.abs(colExtent)) & \
+        (d['centered_c_grid_coarse'].squeeze() <= np.abs(colExtent))
+        reducedRow = d['centered_r_grid_coarse'].squeeze()[rowFilter]
+        reducedCol = d['centered_c_grid_coarse'].squeeze()[colFilter]
+        if kernel_type=='peak_kernel':
+            peak_kernel = d['peak_kernel'][np.ix_(rowFilter,colFilter)]
+            peak_kernel[peak_kernel<0] = 0.
+        elif kernel_type=='ghost_kernel':
+            ghost_kernel =  d['ghost_kernel'][np.ix_(rowFilter,colFilter)]
+            ghost_kernel[ghost_kernel<0] = 0.
+            
+    # Normalization
+    total_sl = np.sum(peak_kernel) + np.sum(ghost_kernel)
+    peak_kernel = peak_kernel/total_sl
+    ghost_kernel = ghost_kernel/total_sl
+        
+    # Mask peak kernel center pixels
+    rowFilter = (d['centered_r_grid_coarse'].squeeze() >= -np.abs(rowExtents[0])) & \
+    (d['centered_r_grid_coarse'].squeeze() <= np.abs(rowExtents[0]))
+    colFilter = (d['centered_c_grid_coarse'].squeeze() >= -np.abs(colExtents[0])) & \
+    (d['centered_c_grid_coarse'].squeeze() <= np.abs(colExtents[0]))
+    reducedRow = d['centered_r_grid_coarse'].squeeze()[rowFilter]
+    reducedCol = d['centered_c_grid_coarse'].squeeze()[colFilter]
+       
+    centerRowFilter = (reducedRow >= -np.abs(rowCenterMask)) & \
+        (reducedRow <= np.abs(rowCenterMask))
+    centerColFilter = (reducedCol >= -np.abs(colCenterMask)) & \
+        (reducedCol <= np.abs(colCenterMask))
+    peak_kernel[np.ix_(centerRowFilter,centerColFilter)] = 0
+    
+    return peak_kernel, ghost_kernel
+
+def pad_convolve_fft(data,kernel,row_pad,col_pad,**kwargs):
+    """
+    frame/kernel convolution with reflective padding at frame edges
+    Parameters
+    data :  numpy array, 2D float (shape: nrow x ncol) 
+        exposure frame to be convolved with kernel
+    kernel : numpy array, 2D float
+        straylight kernel to be convolved with frame
+    row_pad : int
+        integer ceiling of max row difference away from center (0)
+    col_pad : int
+        integer ceiling of max column difference away from center (0)
+    Returns
+    result : numpy array, 2D float (shape: nrow x ncol) 
+        convolved frame with reflective padding
+    """
+    new_data = np.pad(data,((row_pad,row_pad),(col_pad,col_pad)),mode='reflect')
+    result = convolve_fft(new_data,kernel,**kwargs)[row_pad:-row_pad,col_pad:-col_pad]
+    return result
+
+def F_conv_ghost_msat(raw_frame, ghost_kernel, rowExtent, colExtent, ghost_peak_row_sum, ghost_peak_col_dif): 
+    """
+    Convolve frame with effective ghost kernel row mirrored and column shifted; reflective padding
+    Parameters
+    raw_frame : numpy array, 2D float (shape: nrow x ncol) 
+        exposure frame previously deconvolved with peak straylight kernel
+    ghost_kernel : numpy array, 2D float
+        ghost kernel
+    rowExtent : int
+        max row difference away from center (0) for ghost kernel
+    colExtent : int
+        max column difference away from center (0) for ghost kernel
+    ghost_peak_row_sum : int
+        sum of ghost and peak row centers (constant for each sensor)
+    ghost_peak_col_dif : int
+        ghost kernel center column minus peak kernel center column (constant for each sensor)
+    row_pad : int
+        integer ceiling of max row difference away from center (0)
+    col_pad : int
+        integer ceiling of max column difference away from center (0)
+    Returns
+    conv_ghost_frame : numpy array, 2D float (shape: nrow x ncol) 
+        exposure frame convolved with ghost kernel
+    """
+    nrows = raw_frame.shape[0] 
+    effective_ghost_kernel = np.zeros((ghost_kernel.shape[0]+(2*np.abs(nrows-ghost_peak_row_sum+1)).astype(int),
+                                       ghost_kernel.shape[1]+2*np.abs(ghost_peak_col_dif).astype(int)))
+    if nrows-ghost_peak_row_sum >= 0 and ghost_peak_col_dif < 0:
+        effective_ghost_kernel[-ghost_kernel.shape[0]:,0:ghost_kernel.shape[1]] = ghost_kernel[::-1,]
+    elif nrows-ghost_peak_row_sum < 0 and ghost_peak_col_dif < 0:
+        effective_ghost_kernel[0:ghost_kernel.shape[0],0:ghost_kernel.shape[1]] = ghost_kernel[::-1,]
+    elif nrows-ghost_peak_row_sum >= 0 and ghost_peak_col_dif >= 0:
+        effective_ghost_kernel[-ghost_kernel.shape[0]:,-ghost_kernel.shape[1]:] = ghost_kernel[::-1,]
+    elif nrows-ghost_peak_row_sum < 0 and ghost_peak_col_dif >= 0:
+        effective_ghost_kernel[0:ghost_kernel.shape[0],-ghost_kernel.shape[1]:] = ghost_kernel[::-1,]
+    conv_ghost_frame = pad_convolve_fft(raw_frame,effective_ghost_kernel,row_pad=np.ceil(rowExtent).astype(int),
+                                        col_pad=np.ceil(colExtent).astype(int), normalize_kernel=False)[::-1,]
+    return conv_ghost_frame
+
 class Straylight_Kernel():
     '''
     class to construct wavelength-merged kernels for each field and field-merged peak (and optionally ghost) 
@@ -560,8 +677,8 @@ class ISSF_Exposure(dict):
         normalize_power: divides data by power.
         normalize_time: divides data by int_time.
         plot: plots the data as 2D pcolormesh.
-        remove_straylight: 
-            removes straylight from the data array. More work is needed for MethaneSAT straylight correction.
+	remove_straylight: removes straylight from the data array (MethaneAIR)
+	remove_straylight_msat: removes straylight from the data array (MethaneSAT)
         
     """
     def __init__(self,wavelength,data,instrum=None,which_band=None,
@@ -666,6 +783,42 @@ class ISSF_Exposure(dict):
             new_data = (self['data']-convolve_fft(new_data, K_far, normalize_kernel=False))/(1-sum_K_far)
             self.logger.info('{} iteration done'.format(i_iter))
         self['data'] = new_data
+
+    def remove_straylight_msat(self,K_far,ghost_kernel,rowExtents,colExtents,ghost_peak_row_sum, ghost_peak_col_dif, sum_K_far=None,n_iter=3):
+    	"""
+    	Perform straylight correction deconvolution using peak and ghost kernels
+    	Parameters
+    	K_far : numpy array, 2D float 
+        	far-field peak straylight kernel
+    	ghost_kernel : numpy array, 2D float 
+        	ghost straylight kernel
+    	rowExtents : list of int
+        	max row difference away from center (0) for peak and ghost kernels
+    	colExtents : list of int
+        	max column difference away from center (0) for peak and ghost kernels
+    	ghost_peak_row_sum : int
+        	sum of ghost and peak row centers (constant for each sensor)
+    	ghost_peak_col_dif : int
+        	ghost kernel center column minus peak kernel center column (constant for each sensor)
+    	sum_K_far : float, optional
+        	integral of far-field straylight kernel. The default is None.
+    	n_iter : int, optional
+        	Number of iterations for peak kernel deconvolution. The default is 3.
+    	"""
+    	if K_far is None:
+        	self.logger.warning('kernel not provided, return')
+        	return
+    	if sum_K_far is None:
+        	sum_K_far = np.nansum(K_far)
+    	new_data = self['data'].copy()
+    	for i_iter in range(n_iter):
+        	new_data = (self['data']-pad_convolve_fft(new_data, K_far, 
+                                                  	row_pad = np.ceil(rowExtents[0]).astype(int),
+                                                  	col_pad = np.ceil(colExtents[0]).astype(int),
+                                                  	normalize_kernel=False))/(1-sum_K_far)
+        	self.logger.info('{} iteration done'.format(i_iter))
+    	new_data = new_data-F_conv_ghost_msat(new_data,ghost_kernel,rowExtents[1],colExtents[1],ghost_peak_row_sum,ghost_peak_col_dif) 
+    	self['data'] = new_data
 
 class Central_Wavelength(list):
     '''
