@@ -437,8 +437,8 @@ class Straylight_Kernel():
                           saving_time.strftime('%Y-%m-%dT%H%M%SZ')+'.nc')
         nc = Dataset(fn,'w')
         ncattr_dict = {'description':self.instrum + ' straylight kernels',
-                       'institution': 'University at Buffalo',
-                       'contact': 'Kang Sun, kangsun@buffalo.edu',
+                       'institutions': 'Harvard University; University at Buffalo',
+                       'contacts': 'David Miller, djmiller@g.harvard.edu; Kang Sun, kangsun@buffalo.edu',
                        'history': 'Created '+saving_time.strftime('%Y-%m-%dT%H%M%SZ'),
                        'instrument': self.instrum,
                        'band': self.which_band,
@@ -1963,8 +1963,8 @@ class Multiple_ISRFs():
             saving_time = dt.datetime.now()
         nc = Dataset(fn,'w')
         ncattr_dict = {'description':'MethaneAIR/MethaneSAT ISRF data (https://doi.org/10.5194/amt-14-3737-2021)',
-                       'institution':'University at Buffalo',
-                       'contact':'Kang Sun, kangsun@buffalo.edu',
+                       'institutions': 'Harvard University; University at Buffalo',
+                       'contacts': 'David Miller, djmiller@g.harvard.edu; Kang Sun, kangsun@buffalo.edu',
                        'history':'Created '+saving_time.strftime('%Y-%m-%dT%H:%M:%SZ'),
                        'instrument':self.instrum,
                        'band':self.which_band,
