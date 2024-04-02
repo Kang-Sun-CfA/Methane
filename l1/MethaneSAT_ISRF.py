@@ -1952,9 +1952,10 @@ class Multiple_ISRFs():
         nc.close()
         return self
         
-    def save_nc(self,fn,saving_time=None):
+    def save_nc(self,fn,dataset,saving_time=None):
         '''
         save data to netcdf
+	dataset: str, description of calibration dataset used to create ISRF lookup table (e.g. flight system level TVAC)
         '''
         if not hasattr(self,'isrf_data'):
             self.apply_median_filter()
@@ -1966,7 +1967,8 @@ class Multiple_ISRFs():
                        'contact':'Kang Sun, kangsun@buffalo.edu',
                        'history':'Created '+saving_time.strftime('%Y-%m-%dT%H:%M:%SZ'),
                        'instrument':self.instrum,
-                       'band':self.which_band}
+                       'band':self.which_band,
+		       'dataset: dataset}
         nc.setncatts(ncattr_dict)
         nc.createDimension('delta_wavelength',len(self.dw_grid))
         nc.createDimension('central_wavelength',self.shape[1])
