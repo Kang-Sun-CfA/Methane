@@ -434,7 +434,7 @@ class Straylight_Kernel():
         if saving_time is None:
             saving_time = dt.datetime.now()
         fn = os.path.join(out_dir,self.instrum+'_'+self.which_band+'_straylight_kernel_'+
-                          saving_time.strftime('%Y-%m-%dT%H:%M:%SZ')+'.nc')
+                          saving_time.strftime('%Y-%m-%dT%H%M%SZ')+'.nc')
         nc = Dataset(fn,'w')
         ncattr_dict = {'description':self.instrum + ' straylight kernels',
                        'institution': 'University at Buffalo',
