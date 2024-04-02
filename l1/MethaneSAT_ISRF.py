@@ -426,21 +426,24 @@ class Straylight_Kernel():
             cb = None
         return dict(fig=fig,axs=axs,cb=cb)
                               
-    def save_nc(self, out_dir, data_collection_date=None, saving_time=None):
+    def save_nc(self, out_dir, dataset, column_orientation='FPA orientation', saving_time=None):
+        """
+    	dataset: str, description of calibration dataset(s) used to construct straylight kernel
+    	column_orientation: str, description of column orientation order used to construction straylight_kernel
+        """
         if saving_time is None:
             saving_time = dt.datetime.now()
-        if data_collection_date is None:
-            data_collection_date = dt.datetime.now()
         fn = os.path.join(out_dir,self.instrum+'_'+self.which_band+'_straylight_kernel_'+
-                          saving_time.strftime('%Y-%m-%dT%H:%M:%SZ')+'.nc')
+                          saving_time.strftime('%Y-%m-%dT%H%M%SZ')+'.nc')
         nc = Dataset(fn,'w')
         ncattr_dict = {'description':self.instrum + ' straylight kernels',
-                       'institution':'University at Buffalo',
-                       'contact':'Kang Sun, kangsun@buffalo.edu',
-                       'history':'Created '+saving_time.strftime('%Y-%m-%dT%H:%M:%SZ'),
-                       'instrument':self.instrum,
-                       'band':self.which_band,
-                       'data_collection_date':data_collection_date,
+                       'institutions': 'Harvard University; University at Buffalo',
+                       'contacts': 'David Miller, djmiller@g.harvard.edu; Kang Sun, kangsun@buffalo.edu',
+                       'history': 'Created '+saving_time.strftime('%Y-%m-%dT%H%M%SZ'),
+                       'instrument': self.instrum,
+                       'band': self.which_band,
+                       'dataset': dataset,
+		       'column_orientation': column_orientation,
                        'oversample_factor':self.oversample_factor}
         nc.setncatts(ncattr_dict)
         
@@ -1088,7 +1091,7 @@ class Single_ISRF(OrderedDict):
     def __init__(self):
         self.logger = logging.getLogger(__name__)
     
-    def merge(self,isrf,min_scale=8000):
+    def merge(self,isrf,min_scale=8000,weighting_exponent=4):
         '''
         merge with another isrf at the same row/wavelength. 
         needed for methanesat where multiple fields fill the the slit
@@ -1096,6 +1099,8 @@ class Single_ISRF(OrderedDict):
             another Single_ISRF object
         min_scale:
             if one isrf has scale lower than it, the other will be used without weighting
+	weighting_exponent:
+	    exponent by which to weight overlapping ISRFs
         '''
         if 'row' not in self.keys():
             return isrf
@@ -1111,8 +1116,8 @@ class Single_ISRF(OrderedDict):
         new_isrf = Single_ISRF()
         new_isrf['row'] = self['row']
         new_isrf['dw_grid'] = self['dw_grid']
-        w1 = np.nanmean(self['scales_final'])
-        w2 = np.nanmean(isrf['scales_final'])
+        w1 = np.nanmean(self['scales_final'])**weighting_exponent
+        w2 = np.nanmean(isrf['scales_final'])**weighting_exponent
         if w1 < min_scale and w2 >= min_scale:
             self.logger.debug('second isrf receives full weight')
             w1 = 0.;w2 = 1.
@@ -1806,7 +1811,9 @@ class Multiple_ISRFs():
         Detect and mask outliers based on log outlier and peak width criteria
         '''
         # Detect outlier ISRFs
-        isrf_data = self.isrf_data
+        dummy_isrf = self.dw_grid*np.nan
+        isrf_data = np.array([d['ISRF_restretched'] if 'ISRF_restretched' in d.keys() else dummy_isrf for d in self.data.ravel()]).reshape(self.shape+(-1,))
+        self.isrf_data = isrf_data
         isrf_data_smooth = median_filter(isrf_data,size=median_filter_size)
         rms = np.sqrt(np.sum(np.power(isrf_data_smooth-isrf_data,2),axis=2)/(np.count_nonzero(~np.isnan(isrf_data), axis=2)-1))
         median_rms = np.nanmedian(rms,axis=1)
@@ -1945,9 +1952,10 @@ class Multiple_ISRFs():
         nc.close()
         return self
         
-    def save_nc(self,fn,saving_time=None):
+    def save_nc(self,fn,dataset,saving_time=None):
         '''
         save data to netcdf
+	dataset: str, description of calibration dataset used to create ISRF lookup table (e.g. flight system level TVAC)
         '''
         if not hasattr(self,'isrf_data'):
             self.apply_median_filter()
@@ -1955,11 +1963,12 @@ class Multiple_ISRFs():
             saving_time = dt.datetime.now()
         nc = Dataset(fn,'w')
         ncattr_dict = {'description':'MethaneAIR/MethaneSAT ISRF data (https://doi.org/10.5194/amt-14-3737-2021)',
-                       'institution':'University at Buffalo',
-                       'contact':'Kang Sun, kangsun@buffalo.edu',
+                       'institutions': 'Harvard University; University at Buffalo',
+                       'contacts': 'David Miller, djmiller@g.harvard.edu; Kang Sun, kangsun@buffalo.edu',
                        'history':'Created '+saving_time.strftime('%Y-%m-%dT%H:%M:%SZ'),
                        'instrument':self.instrum,
-                       'band':self.which_band}
+                       'band':self.which_band,
+		       'dataset': dataset}
         nc.setncatts(ncattr_dict)
         nc.createDimension('delta_wavelength',len(self.dw_grid))
         nc.createDimension('central_wavelength',self.shape[1])
