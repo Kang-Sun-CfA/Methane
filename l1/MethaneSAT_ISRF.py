@@ -1968,7 +1968,7 @@ class Multiple_ISRFs():
                        'history':'Created '+saving_time.strftime('%Y-%m-%dT%H:%M:%SZ'),
                        'instrument':self.instrum,
                        'band':self.which_band,
-		       'dataset: dataset}
+		       'dataset': dataset}
         nc.setncatts(ncattr_dict)
         nc.createDimension('delta_wavelength',len(self.dw_grid))
         nc.createDimension('central_wavelength',self.shape[1])
