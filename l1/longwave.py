@@ -14,6 +14,11 @@ logging.basicConfig(level=logging.INFO)
 from scipy.interpolate import RegularGridInterpolator, interp1d
 from astropy.convolution import convolve_fft
 import sys,os,glob
+
+PLANCK_CONSTANT = 6.62607004e-34
+BOLTZMANN_CONSTANT = 1.38064852e-23
+LIGHT_SPEED = 2.99792458e8
+
 # In this "robust" version of arange the grid doesn't suffer 
 # from the shift of the nodes due to error accumulation.
 # This effect is pronounced only if the step is sufficiently small.
@@ -38,7 +43,7 @@ def F_center2edge(lon,lat):
     return lonr,latr
 
 def BB(T_K,w_nm,radiance_unit='photons/s/cm2/sr/nm',
-       c=2.99792458e8,h=6.62607004e-34,kB=1.38064852e-23):
+       c=LIGHT_SPEED,h=PLANCK_CONSTANT,kB=BOLTZMANN_CONSTANT):
     '''
     planck function with different output units
     '''
@@ -239,6 +244,28 @@ class Longwave(object):
         self.emissivity = emissivity
         self.vza = vza
     
+    def replace_with_CrIS(self,cris_obj=None,l1_filename=None,
+                          N2O_filename=None,T_filename=None):
+        '''replace N2O/T/Ts with CrIS data'''
+        if not isinstance(cris_obj,CrIS_Pixel):
+            cris_obj = CrIS_Pixel(l1_filename,N2O_filename,T_filename)
+            cris_obj.load_pixel()
+        f = interp1d(cris_obj['pressure'], cris_obj['N2O'],
+                     bounds_error=False,fill_value='extrapolate')
+        self.profiles['N2O'] = f(self.profiles['P_layer'])
+        f = interp1d(cris_obj['pressure'], cris_obj['T'],
+                     bounds_error=False,fill_value='extrapolate')
+        self.profiles['T_level'] = f(self.profiles['P_level'])
+        self.profiles = F_level2layer(self.profiles)
+        for ilayer in range(self.nlayer):
+            P = self.profiles['P_layer'][ilayer]*100.# hPa to Pa
+            T = self.profiles['T_layer'][ilayer]
+            B = self.profiles['H2O'][ilayer]
+            # air density in molec/cm3
+            self.profiles['air_density'][ilayer] = F_get_dry_air_density(P,T,B)
+        self.Ts = cris_obj['Ts']
+        self.emissivity = interp1d(cris_obj['wvl_emissivity'],cris_obj['emissivity'])
+        
     def level2layer(self,keys=None):
         '''
         level to layer for pressure, temperature, and altitude. assuming layer P
@@ -371,7 +398,10 @@ class Longwave(object):
             self.get_sigmas()
             jac = np.full((len(self.w1),self.nlayer),np.nan)
             Ts = self.Ts
-            emissivity = self.emissivity
+            if callable(self.emissivity):
+                emissivity = self.emissivity(self.w1)
+            else:
+                emissivity = self.emissivity
             vza = self.vza
             mu = np.cos(vza/180*np.pi)
             radiance_unit = self.radiance_unit
@@ -474,7 +504,10 @@ class Longwave(object):
         note the profile dimensions go from surface to TOA in this function
         '''
         Ts = self.Ts
-        emissivity = self.emissivity
+        if callable(self.emissivity):
+            emissivity = self.emissivity(self.w1)
+        else:
+            emissivity = self.emissivity
         vza = self.vza
         mu = np.cos(vza/180*np.pi)
         radiance_unit = self.radiance_unit
@@ -794,3 +827,68 @@ class LSA(object):
             state_dict['{}_AVK'.format(state_dict['name'])] = AVK_block
             self.logger.info('{} DOFS is {:.3f}'.format(state_dict['name'],AVK_block.trace()))
             self.logger.info('{} surface column AVK is {:.3f}'.format(state_dict['name'],column_AVK[0]))
+
+
+class CrIS_Pixel(dict):
+    def __init__(self,l1_filename,N2O_filename,T_filename):
+        self.logger = logging.getLogger(__name__)
+        self.nc1 = Dataset(l1_filename,'r')
+        self.nc2_N2O = Dataset(N2O_filename,'r')
+        self.nc2_T = Dataset(T_filename,'r')
+        
+    def load_pixel(self,atrack_1based=27,
+                   xtrack_1based=15,fov_1based=7,granule_number=191):
+        self.atrack_1based = atrack_1based
+        self.xtrack_1based = xtrack_1based
+        self.fov_1based = fov_1based
+        self.granule_number = granule_number
+        pixel_l1_id = '{}.{:02d}E{:02d}.{:01d}'.format(self.nc1.gran_id,
+                                                      atrack_1based,
+                                                      xtrack_1based,
+                                                      fov_1based)
+        l1_mask = self.nc1['fov_obs_id'][:] == pixel_l1_id
+        if np.sum(l1_mask) != 1:
+            self.logger.error('{} l1 pixel found'.format(np.sum(l1_mask)))
+            return
+        wnum_mw = self.nc1['wnum_mw'][:]
+        wvl_mw = 1e7/wnum_mw
+        rad_mw = self.nc1['rad_mw'][:][l1_mask][0,:]*\
+            wnum_mw/wvl_mw*1e-3/(PLANCK_CONSTANT*LIGHT_SPEED/wvl_mw*1e9)*1e-4
+        wnum_sw = self.nc1['wnum_sw'][:]
+        wvl_sw = 1e7/wnum_sw
+        rad_sw = self.nc1['rad_sw'][:][l1_mask][0,:]*\
+            wnum_sw/wvl_sw*1e-3/(PLANCK_CONSTANT*LIGHT_SPEED/wvl_sw*1e9)*1e-4
+        self['wnum_mw'] = wnum_mw
+        self['wvl_mw'] = wvl_mw
+        self['rad_mw'] = rad_mw
+        self['wnum_sw'] = wnum_sw
+        self['wvl_sw'] = wvl_sw
+        self['rad_sw'] = rad_sw
+        l2_mask = (self.nc2_N2O['Geolocation/CrIS_Granule'][:] == granule_number)&\
+                  (self.nc2_N2O['Geolocation/CrIS_Atrack_Index'][:] == atrack_1based-1)&\
+                  (self.nc2_N2O['Geolocation/CrIS_Xtrack_Index'][:] == xtrack_1based-1)&\
+                  (self.nc2_N2O['Geolocation/CrIS_Pixel_Index'][:] == fov_1based-1)
+        if np.sum(l2_mask) != 1:
+            self.logger.error('{} l2 pixel found'.format(np.sum(l2_mask)))
+            return
+        pressure = self.nc2_N2O['Pressure'][l2_mask,:][0,:]
+        N2O = self.nc2_N2O['Species'][l2_mask,:][0,:]
+        T = self.nc2_T['Species'][l2_mask,:][0,:]
+        mask = pressure > 0# remove -999
+        self['pressure'] = pressure[mask]
+        self['N2O'] = N2O[mask]
+        self['T'] = T[mask]
+        self['Ts'] = self.nc2_N2O['Retrieval/SurfaceTemperature'][l2_mask]
+        self['emissivity'] = self.nc2_N2O['Characterization/Emissivity'][l2_mask,:][0,:]
+        self['wnum_emissivity'] = self.nc2_N2O['Characterization/Emissivity_Wavenumber'][l2_mask,:][0,:]
+        self['wvl_emissivity'] = 1e7/self['wnum_emissivity']
+        l2_latlon = np.array([self.nc2_N2O['Longitude'][l2_mask],self.nc2_N2O['Latitude'][l2_mask]])
+        l1_latlon = np.array([self.nc1['lon'][:][l1_mask],self.nc1['lat'][:][l1_mask]])
+        np.testing.assert_array_equal(l1_latlon, l2_latlon)
+        self['lon'] = self.nc2_N2O['Longitude'][l2_mask]
+        self['lat'] = self.nc2_N2O['Latitude'][l2_mask]
+        
+    def close_nc(self):
+        self.nc1.close()
+        self.nc2_N2O.close()
+        self.nc2_T.close()
