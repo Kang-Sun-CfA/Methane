@@ -43,7 +43,8 @@ def F_center2edge(lon,lat):
     return lonr,latr
 
 def BB(T_K,w_nm,radiance_unit='photons/s/cm2/sr/nm',
-       c=LIGHT_SPEED,h=PLANCK_CONSTANT,kB=BOLTZMANN_CONSTANT):
+       c=LIGHT_SPEED,h=PLANCK_CONSTANT,kB=BOLTZMANN_CONSTANT,
+       do_dBdT=False):
     '''
     planck function with different output units
     '''
@@ -57,44 +58,53 @@ def BB(T_K,w_nm,radiance_unit='photons/s/cm2/sr/nm',
     
     w = w_nm*1e-9# wavelength in m
     T = T_K
+    a = 1./(np.exp(h*c/w/kB/T)-1)
+    if do_dBdT:
+        dadT = np.power(np.exp(h*c/w/kB/T)-1,-2)*np.exp(h*c/w/kB/T)*h*c/w/kB/T**2
     if unit=='W/m2/sr/nm':
-        r = 2*h*np.power(c,2)*np.power(w,-5)/(np.exp(h*c/w/kB/T)-1)*1e-9
+        r = 2*h*np.power(c,2)*np.power(w,-5)*a*1e-9
+        if do_dBdT:
+            drdT = 2*h*np.power(c,2)*np.power(w,-5)*dadT*1e-9
     elif unit=='photons/s/cm2/sr/nm':
-        r = 2*c*np.power(w,-4)/(np.exp(h*c/w/kB/T)-1)*1e-13
+        r = 2*c*np.power(w,-4)*a*1e-13
+        if do_dBdT:
+            drdT = 2*c*np.power(w,-4)*dadT*1e-13
     elif unit=='photons/s/cm2/sr/cm-1':
-        r = 2*c*np.power(w,-4)/(np.exp(h*c/w/kB/T)-1)*1e-13*np.power(w_nm,2)*1e-7
-    return r/factor
+        r = 2*c*np.power(w,-4)*a*1e-13*np.power(w_nm,2)*1e-7
+        if do_dBdT:
+            drdT = 2*c*np.power(w,-4)*dadT*1e-13*np.power(w_nm,2)*1e-7
+    if do_dBdT:
+        return r/factor,drdT/factor
+    else:
+        return r/factor
 
 def F_interp_absco(absco_P,absco_T,absco_B,absco_w,absco_sigma,
-                   Pq,Tq,Bq,wq,T_ext=15):
+                   Pq,Tq,Bq,wq,do_dsigmadT=False):
     ''' 
     absco_* should be the same format as in the absco table saved by splat
     P should be in Pa; T in K; B in volume/volume
-    T_ext should be larger than the temperature grid size
     '''
-    local_P_id = np.argmin(np.abs(absco_P-Pq))
-    if local_P_id == 0:
-        P_mask = (absco_P<=absco_P[local_P_id+1])
-    elif local_P_id == len(absco_P)-1:
-        P_mask = (absco_P>=absco_P[local_P_id-1])
-    else:
-        P_mask = (absco_P>=absco_P[local_P_id-1])&(absco_P<=absco_P[local_P_id+1])
+    P_mask = np.isin(absco_P,absco_P[np.argsort(np.abs(absco_P-Pq))[:2]])
     aP = absco_P[P_mask]
     aT = absco_T[P_mask,]
     asigma = absco_sigma[P_mask,]
     T_mask = np.zeros(aT.shape,dtype=bool)
     for ilayer,iT in enumerate(aT):
-        T_mask[ilayer,] = (iT >= Tq-T_ext) & (iT <= Tq+T_ext)
+        T_mask[ilayer,] = np.isin(iT,iT[np.argsort(np.abs(iT-Tq))[:2]])
     T_grid = aT[0,T_mask[0,]]
-    for ilayer in range(len(aP)):
-        if not np.array_equal(T_grid,aT[ilayer,T_mask[ilayer,]]):
-            logging.error('unique temperature grid is not regular!')
-            return
     sigma_grid = np.zeros((len(aP),len(T_grid),*asigma.shape[2:]))
     for ilayer in range(len(aP)):
         sigma_grid[ilayer,...] = asigma[ilayer,T_mask[ilayer,],...]
     func = RegularGridInterpolator((aP,T_grid,absco_B,absco_w), sigma_grid)
-    return func((Pq,Tq,Bq,wq))
+    sigma = func((Pq,Tq,Bq,wq))
+    if not do_dsigmadT:
+        return sigma
+    else:
+        dsigmadT_grid = (sigma_grid[:,1,:,:]-sigma_grid[:,0,:,:])\
+            /(T_grid[1]-T_grid[0])
+        func_d = RegularGridInterpolator((aP,absco_B,absco_w), dsigmadT_grid)    
+        dsigmadT = func_d((Pq,Bq,wq))
+        return sigma, dsigmadT
 
 def F_get_dry_air_density(P_Pa,T_K,B_H2OVMR):
     '''calculate dry air density in molec/cm3 given P, T, water vapor dry air vmr'''
