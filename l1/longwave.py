@@ -357,11 +357,11 @@ class Longwave(object):
         self.jacs = jacs
     
     def get_jacobian(self,key,finite_difference=True,fd_delta=None,
-                             fd_relative_delta=None,
-                             wrt='mixing ratio'):
+                     fd_relative_delta=None,
+                     wrt='mixing ratio'):
         ''' 
         key:
-            a key name in self.profile
+            a key name in self.profile or a scalar attribute of self
         finite_difference:
             true if fd, false means analytical
         fd_delta:
@@ -374,39 +374,84 @@ class Longwave(object):
             'number density', or 'optical depth'
         '''
         if finite_difference:
-            profile_c = self.profiles[key].copy()
-            if key == 'T_level':
-                profile_layer_c = self.profiles['T_layer'].copy()  
-                nz = self.nlevel
-            else:
-                nz = self.nlayer
-            if fd_delta is None and fd_relative_delta is None:
-                self.logger.warning('a relative fd_relative_delta of 0.001 is assumed')
-                fd_relative_delta = 1e-3
-            if fd_delta is None and fd_relative_delta is not None:
-                fd_delta = profile_c*fd_relative_delta
-            profile_l = profile_c-fd_delta/2.
-            profile_r = profile_c+fd_delta/2.
-            jac = np.full((len(self.w1),nz),np.nan)
-            for iz in range(nz):
-                self.profiles[key][iz] = profile_l[iz]
-                if key == 'T_level':
-                    self.level2layer(keys=['T'])
+            if key in ['Ts']:
                 self.get_sigmas()
+                
+                key0 = getattr(self,key)
+                if fd_delta is None and fd_relative_delta is None:
+                    self.logger.warning('a relative fd_relative_delta of 0.001 is assumed')
+                    fd_relative_delta = 1e-3
+                if fd_delta is None and fd_relative_delta is not None:
+                    fd_delta = key0*fd_relative_delta
+                
+                setattr(self,key,key0-fd_delta/2)
                 r_l = self.get_radiance()
-                self.profiles[key][iz] = profile_r[iz]
-                if key == 'T_level':
-                    self.level2layer(keys=['T'])
-                self.get_sigmas()
+                
+                setattr(self,key,key0+fd_delta/2)
                 r_r = self.get_radiance()
-                jac[:,iz] = (r_r-r_l)/fd_delta[iz]
-            # reset profiles and tau to original values (without perturbations)
-            self.profiles[key] = profile_c.copy()
-            if key == 'T_level':
-                self.profiles['T_layer'] = profile_layer_c.copy()
-            self.get_sigmas()
+                
+                jac = ((r_r-r_l)/fd_delta)[:,np.newaxis]
+            else:
+                profile_c = self.profiles[key].copy()
+                if key == 'T_level':
+                    profile_layer_c = self.profiles['T_layer'].copy()  
+                    nz = self.nlevel
+                else:
+                    nz = self.nlayer
+                if fd_delta is None and fd_relative_delta is None:
+                    self.logger.warning('a relative fd_relative_delta of 0.001 is assumed')
+                    fd_relative_delta = 1e-3
+                if fd_delta is None and fd_relative_delta is not None:
+                    fd_delta = profile_c*fd_relative_delta
+                profile_l = profile_c-fd_delta/2.
+                profile_r = profile_c+fd_delta/2.
+                jac = np.full((len(self.w1),nz),np.nan)
+                for iz in range(nz):
+                    self.profiles[key][iz] = profile_l[iz]
+                    if key == 'T_level':
+                        self.level2layer(keys=['T'])
+                    self.get_sigmas()
+                    r_l = self.get_radiance()
+                    self.profiles[key][iz] = profile_r[iz]
+                    if key == 'T_level':
+                        self.level2layer(keys=['T'])
+                    self.get_sigmas()
+                    r_r = self.get_radiance()
+                    jac[:,iz] = (r_r-r_l)/fd_delta[iz]
+                # reset profiles and tau to original values (without perturbations)
+                self.profiles[key] = profile_c.copy()
+                if key == 'T_level':
+                    self.profiles['T_layer'] = profile_layer_c.copy()
+                self.get_sigmas()
         else:
-            if key in ['T_layer']:
+            if key in ['Ts']:
+                self.get_sigmas()
+                jac = np.full((len(self.w1),1),np.nan)
+                Ts = self.Ts
+                if callable(self.emissivity):
+                    emissivity = self.emissivity(self.w1)
+                else:
+                    emissivity = self.emissivity
+                vza = self.vza
+                mu = np.cos(vza/180*np.pi)
+                radiance_unit = self.radiance_unit
+                # surface planck function
+                Bs,dBsdTs = BB(Ts,self.w1,radiance_unit,do_dBdT=True)
+                # planck function for layer and level temperatures, sfc->toa
+                B_level = np.zeros((self.nlevel,len(self.w1)))
+                B_layer = np.zeros((self.nlayer,len(self.w1)))
+                dB_layerdT = np.zeros((self.nlayer,len(self.w1)))
+                for ilevel in range(self.nlevel):
+                    B_level[ilevel,] = BB(self.profiles['T_level'][ilevel],self.w1,radiance_unit)
+                for ilayer in range(self.nlayer):
+                    B_layer[ilayer,], dB_layerdT[ilayer,] = BB(
+                        self.profiles['T_layer'][ilayer],
+                        self.w1,radiance_unit,do_dBdT=True)
+                # slant optical thickness, sfc->toa
+                dtau_layer_mu = self.dtau_layer/mu
+                jac[:,0] = emissivity * dBsdTs * np.exp(-np.nansum(dtau_layer_mu,axis=0))
+                
+            elif key in ['T_layer']:
                 self.get_sigmas(do_dsigmadT=True)
                 jac = np.full((len(self.w1),self.nlayer),np.nan)
                 Ts = self.Ts
@@ -418,9 +463,8 @@ class Longwave(object):
                 mu = np.cos(vza/180*np.pi)
                 radiance_unit = self.radiance_unit
                 # surface planck function
-                Bs,dBsdTs = BB(Ts,self.w1,radiance_unit,do_dBdT=True)
+                Bs = BB(Ts,self.w1,radiance_unit)
                 Bs *= emissivity
-                dBsdTs *= emissivity
                 # planck function for layer and level temperatures, sfc->toa
                 B_level = np.zeros((self.nlevel,len(self.w1)))
                 B_layer = np.zeros((self.nlayer,len(self.w1)))
