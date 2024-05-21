@@ -14,6 +14,7 @@ logging.basicConfig(level=logging.INFO)
 from scipy.interpolate import RegularGridInterpolator, interp1d
 from astropy.convolution import convolve_fft
 import sys,os,glob
+from collections import OrderedDict
 
 PLANCK_CONSTANT = 6.62607004e-34
 BOLTZMANN_CONSTANT = 1.38064852e-23
@@ -356,7 +357,7 @@ class Longwave(object):
         jacs['Radiance_error'] = jacs['Radiance']/SNR
         self.jacs = jacs
     
-    def get_jacobian(self,key,finite_difference=True,fd_delta=None,
+    def get_jacobian(self,key,finite_difference=False,fd_delta=None,
                      fd_relative_delta=None,
                      wrt='mixing ratio'):
         ''' 
@@ -860,67 +861,200 @@ class Shortwave(object):
         os.system(f'{self.splat_path} {control_path}')
         os.chdir(cwd)
 
-
-class LSA(object):
-    def __init__(self,objs,state_dicts):
+class Parameters(OrderedDict):
+    def __init__(self):
+        pass
+    
+    def add(self,param):
+        OrderedDict.__setitem__(self,param.name,param)
+    
+    def get_prior(self):
+        nstates = []
+        for name, par in self.items():
+            if not par.vary:
+                continue
+            nstates.append(par.nstate)
+        
+        Sa = np.zeros((np.sum(nstates),np.sum(nstates)))
+        count = 0
+        xa = np.zeros(np.sum(nstates))
+        params_names = []
+        for (name,par) in self.items():
+            if not par.vary:
+                continue
+            params_names.append(name)
+            Sa[count:count+par.nstate,count:count+par.nstate] = par.prior_error_matrix
+            xa[count:count+par.nstate] = par.prior
+            count += par.nstate
+        return xa, Sa, nstates, params_names
+    
+    def get_column_metrics(self,names,h):
+        '''get column quantities of profiles
+        names:
+            a list of keys
+        h:
+            air mass weighting factor
         '''
-        objs:
-            a list of Longwave/Shortwave objects
-        state_dicts:
-            a list of state vector dicts for retrieval. may include
-            -name, name mapped to one key in obj.jacs.keys()
+        for (name,par) in self.items():
+            if not par.vary or name not in names:
+                continue
+            setattr(par,'column_posterior_error',
+                    np.sqrt(h@par.posterior_error_matrix@h))
+            setattr(par,'column_measurement_error',
+                    np.sqrt(h@par.measurement_error_matrix@h))
+            setattr(par,'column_prior_error',
+                    np.sqrt(h@par.prior_error_matrix@h))
+            setattr(par,'column_AVK',
+                    h@par.averaging_kernel/h)
+            setattr(par,'dofs',
+                    par.averaging_kernel.trace())
+    
+    def update_vectors(self,vector_name,vector):
+        count = 0
+        for (name,par) in self.items():
+            if not par.vary:
+                continue
+            new_values = vector[count:count+par.nstate]
+            setattr(self[name],vector_name,new_values)
+            count = count+par.nstate
+    
+    def update_matrices(self,matrix_name,matrix):
+        count = 0
+        for (name,par) in self.items():
+            if not par.vary:
+                continue
+            setattr(self[name],matrix_name,
+                    matrix[count:count+par.nstate,count:count+par.nstate])
+            count = count+par.nstate
+
+class Parameter:
+    def __init__(self,name,prior,value=None,prior_error=None,
+                 correlation_km=None,z_km=None,vary=True):
+        '''initialize Parameter class
+        name:
+            name of the state vector component
+        prior:
+            prior value(s) of the state component
+        value:
+            current value, copy prior if none
+        prior_error:
+            prior error value(s) of the state component
+        correlation_km:
+            if it is a profile, use this correlation length to construct prior
+            matrix
+        z_km:
+            altitudes in km
+        vary:
+            whether this parameter is optimized or not
         '''
         self.logger = logging.getLogger(__name__)
-        masks = [(obj.jacs['Wavelength']>=obj.start_w) &
-                 (obj.jacs['Wavelength']<=obj.end_w) &
-                 (~np.isnan(obj.jacs['Radiance'])) for obj in objs]
-        self.radiance_error = np.concatenate([obj.jacs['Radiance_error'][mask] for obj,mask in zip(objs,masks)])
-        self.radiance = np.concatenate([obj.jacs['Radiance'][mask] for obj,mask in zip(objs,masks)])
-        self.SNR = np.concatenate([obj.jacs['SNR'][mask] for obj,mask in zip(objs,masks)])
-        ny = np.sum([np.sum(mask) for mask in masks])
-        air_col = objs[0].profiles['air_density'] * objs[0].profiles['dz']*1e5 # molec/cm2
+        self.name = name
+        self.vary = vary
+        self.prior = prior
+        if value is None:
+            self.value = prior
+        if prior_error is None:
+            self.prior_error = 0.1 * prior
+            self.logger.warning('assuming 10% prior error')
+        else:
+            self.prior_error = prior_error
+        
+        if np.isscalar(prior):
+            self.nstate = 1
+            self.prior_error_matrix = self.prior_error**2
+            return
+        self.nstate = len(prior)
+        self.prior_error_matrix = np.diag(self.prior_error**2)
+        self.correlation_km = correlation_km
+        if correlation_km is not None and z_km is not None:
+            for iz,(ape_i,z_i) in enumerate(zip(self.prior_error,z_km)):
+                for jz,(ape_j,z_j) in enumerate(zip(self.prior_error,z_km)):
+                    if iz == jz: 
+                        continue
+                    elif iz < jz:
+                        self.prior_error_matrix[iz,jz] = ape_i*ape_j*\
+                        np.exp(-np.abs(z_i-z_j)/correlation_km)
+                    else:# prior matrix is symmetric
+                        self.prior_error_matrix[iz,jz] =\
+                        self.prior_error_matrix[jz,iz]
+
+class LSA(object):
+    def __init__(self,bands,param_names,band_weights=None):
+        '''
+        bands:
+            a list of Longwave/Shortwave objects
+        param_names:
+            a list of parameter names for inversion
+        band_weights:
+            if provided, a list the same size as bands to weigh each band by
+            dividing the bands radiance error with the corresponding number
+        '''
+        self.logger = logging.getLogger(__name__)
+        self.bands = bands
+        if band_weights is None:
+            band_weights = np.ones(len(bands))
+        masks = [(band.jacs['Wavelength']>=band.start_w) &
+                 (band.jacs['Wavelength']<=band.end_w) &
+                 (~np.isnan(band.jacs['Radiance'])) for band in bands]
+        self.masks = masks
+        param_names = np.array(param_names)
+        param_mask = np.isin(param_names,
+                             list(set().union(
+                                 *[set(band.jacs.keys()) for band in bands])))
+        if not all(param_mask):
+            self.logger.warning(
+                '{} not in any bands'.format(param_names[~param_mask]))
+        self.param_names = param_names[param_mask]
+        
+        self.param_hints = {}
+                    
+        self.radiance_error = np.concatenate(
+            [band.jacs['Radiance_error'][mask]/weight
+             for band,mask,weight in zip(bands,masks,band_weights)])
+        self.radiance = np.concatenate(
+            [band.jacs['Radiance'][mask] for band,mask in zip(bands,masks)])
+        
+        self.SNR = np.concatenate([band.jacs['SNR'][mask] 
+                                   for band,mask in zip(bands,masks)])
+        self.ny = np.sum([np.sum(mask) for mask in masks])
+        air_col = bands[0].profiles['air_density'] * bands[0].profiles['dz']*1e5 # molec/cm2
         self.h = air_col/np.sum(air_col)
-        state_count = 0
-        for state_dict in state_dicts:
-            avails = np.array([state_dict['name'] in obj.jacs.keys() for obj in objs])
-            if not np.sum(avails):
-                self.logger.error('{} is not in any jacs!'.format(state_dict['name']))
-            jac_created = False
-            for i,(obj,avail,mask) in enumerate(zip(objs,avails,masks)):
-                if i == 0:
-                    start_idx = 0
-                else:
-                    start_idx = np.sum([len(mask) for mask in masks[0:i]])
-                if avail and not jac_created:
-                    nstate = obj.jacs[state_dict['name']].shape[0]
-                    prior_error_matrix = np.diag(state_dict['prior_error']**2)
-                    if 'correlation_length' in state_dict.keys():
-                        for iz,(ape_i,z_i) in enumerate(zip(state_dict['prior_error'],state_dict['z'])):
-                            for jz,(ape_j,z_j) in enumerate(zip(state_dict['prior_error'],state_dict['z'])):
-                                if iz == jz:continue
-                                prior_error_matrix[iz,jz] = \
-                                    ape_i*ape_j*np.exp(-np.abs(z_i-z_j)/state_dict['correlation_length'])
-                    jac = np.zeros((ny,nstate))
-                    jac_created = True
-                if avail:
-                    jac[start_idx:start_idx+len(mask),] = obj.jacs[state_dict['name']][:,mask].T
-            state_dict['jac'] = jac
-            state_dict['nstate'] = nstate
-            state_dict['state_start_idx'] = state_count
-            state_count += nstate
-            state_dict['prior_error_matrix'] = prior_error_matrix
-            
-        self.state_dicts = state_dicts
-        self.state_names = np.array([d['name'] for d in state_dicts])
+    
+    def set_prior(self,name,**kwargs):
+        if name not in self.param_hints:
+            self.param_hints[name] = {}
+
+        for key, val in kwargs.items():
+            self.param_hints[name][key] = val
+    
+    def make_params(self):
+        params = Parameters()
+        for name in self.param_names:
+            par = Parameter(name,**self.param_hints[name])
+            params.add(par)
+        return params
     
     def retrieve(self):
-        nstates = np.sum([d['nstate'] for d in self.state_dicts])
-        K = np.concatenate([d['jac'] for d in self.state_dicts],axis=1)
-        Sa = np.zeros((nstates,nstates))
-        count = 0
-        for d in self.state_dicts:
-            Sa[count:count+d['nstate'],count:count+d['nstate']] = d['prior_error_matrix']
-            count += d['nstate']
+        params = self.make_params()
+        xa, Sa, nstates, state_names = params.get_prior()
+        K = np.zeros((self.ny,np.sum(nstates)))
+        for iband, (band,mask) in enumerate(zip(self.bands,self.masks)):
+            if iband == 0:
+                start_y = 0
+            else:
+                start_y = np.sum([len(mask) for mask in self.masks[0:iband]])
+            
+            for ipar, (name,nstate) in enumerate(zip(state_names,nstates)):
+                if name not in band.jacs.keys():
+                    continue
+                if ipar == 0:
+                    start_x = 0
+                else:
+                    start_x = np.sum(nstates[0:ipar])
+                
+                K[start_y:start_y+np.sum(mask),start_x:start_x+nstate] =\
+                    band.jacs[name].T
+        
         Sy = np.diag(np.square(self.radiance_error))
         G = Sa@K.T@np.linalg.inv(K@Sa@K.T+Sy)
         A = G@K
@@ -928,33 +1062,63 @@ class LSA(object):
         self.Sa = Sa
         self.G = G
         self.A = A
-        self.dofs = A.trace()
-        self.column_AVK = self.h@self.A/self.h
+        self.K = K
         self.Shat = Shat
         self.Sm = G@Sy@G.T
-        # loop over state vector to calculate X{gas} error
-        for state_dict in self.state_dicts:
-            if len(self.h) != state_dict['nstate']:continue
-            Shat_block = Shat[state_dict['state_start_idx']:state_dict['state_start_idx']+state_dict['nstate'],
-                              state_dict['state_start_idx']:state_dict['state_start_idx']+state_dict['nstate']]
-            Sm_block = self.Sm[state_dict['state_start_idx']:state_dict['state_start_idx']+state_dict['nstate'],
-                              state_dict['state_start_idx']:state_dict['state_start_idx']+state_dict['nstate']]
-            AVK_block = A[state_dict['state_start_idx']:state_dict['state_start_idx']+state_dict['nstate'],
-                              state_dict['state_start_idx']:state_dict['state_start_idx']+state_dict['nstate']]
+        params.update_matrices(matrix_name='posterior_error_matrix',matrix=Shat)
+        params.update_matrices(matrix_name='measurement_error_matrix',matrix=self.Sm)
+        params.update_vectors(vector_name='posterior_error',vector=np.sqrt(np.diag(Shat)))
+        params.update_matrices(matrix_name='averaging_kernel',matrix=A)
+        params.update_vectors(vector_name='dofs_vector',vector=np.diag(A))
+        gas_names = self.param_names[
+            np.isin(
+                self.param_names,list(
+                    set().union(*[band.gas_names for band in self.bands]))
+                )
+            ]
+        params.get_column_metrics(gas_names, self.h)
+        self.params = params
+        # nstates = np.sum([d['nstate'] for d in self.state_dicts])
+        # K = np.concatenate([d['jac'] for d in self.state_dicts],axis=1)
+        # Sa = np.zeros((nstates,nstates))
+        # count = 0
+        # for d in self.state_dicts:
+        #     Sa[count:count+d['nstate'],count:count+d['nstate']] = d['prior_error_matrix']
+        #     count += d['nstate']
+        # Sy = np.diag(np.square(self.radiance_error))
+        # G = Sa@K.T@np.linalg.inv(K@Sa@K.T+Sy)
+        # A = G@K
+        # Shat = np.linalg.inv(K.T@np.linalg.inv(Sy)@K+np.linalg.inv(Sa))
+        # self.Sa = Sa
+        # self.G = G
+        # self.A = A
+        # self.dofs = A.trace()
+        # self.column_AVK = self.h@self.A/self.h
+        # self.Shat = Shat
+        # self.Sm = G@Sy@G.T
+        # # loop over state vector to calculate X{gas} error
+        # for state_dict in self.state_dicts:
+        #     if len(self.h) != state_dict['nstate']:continue
+        #     Shat_block = Shat[state_dict['state_start_idx']:state_dict['state_start_idx']+state_dict['nstate'],
+        #                       state_dict['state_start_idx']:state_dict['state_start_idx']+state_dict['nstate']]
+        #     Sm_block = self.Sm[state_dict['state_start_idx']:state_dict['state_start_idx']+state_dict['nstate'],
+        #                       state_dict['state_start_idx']:state_dict['state_start_idx']+state_dict['nstate']]
+        #     AVK_block = A[state_dict['state_start_idx']:state_dict['state_start_idx']+state_dict['nstate'],
+        #                       state_dict['state_start_idx']:state_dict['state_start_idx']+state_dict['nstate']]
             
-            xerror = np.sqrt(self.h@Shat_block@self.h)
-            self.logger.info('X{} error is {:.3E}'.format(state_dict['name'],xerror))
-            state_dict['X{}_error'.format(state_dict['name'])] = xerror
+        #     xerror = np.sqrt(self.h@Shat_block@self.h)
+        #     self.logger.info('X{} error is {:.3E}'.format(state_dict['name'],xerror))
+        #     state_dict['X{}_error'.format(state_dict['name'])] = xerror
             
-            xerror_m = np.sqrt(self.h@self.Sm@self.h)
-            self.logger.info('X{} measurement error is {:.3E}'.format(state_dict['name'],xerror_m))
-            state_dict['X{}_errorm'.format(state_dict['name'])] = xerror_m
+        #     xerror_m = np.sqrt(self.h@self.Sm@self.h)
+        #     self.logger.info('X{} measurement error is {:.3E}'.format(state_dict['name'],xerror_m))
+        #     state_dict['X{}_errorm'.format(state_dict['name'])] = xerror_m
             
-            column_AVK = self.h@AVK_block/self.h
-            state_dict['{}_column_AVK'.format(state_dict['name'])] = column_AVK
-            state_dict['{}_AVK'.format(state_dict['name'])] = AVK_block
-            self.logger.info('{} DOFS is {:.3f}'.format(state_dict['name'],AVK_block.trace()))
-            self.logger.info('{} surface column AVK is {:.3f}'.format(state_dict['name'],column_AVK[0]))
+        #     column_AVK = self.h@AVK_block/self.h
+        #     state_dict['{}_column_AVK'.format(state_dict['name'])] = column_AVK
+        #     state_dict['{}_AVK'.format(state_dict['name'])] = AVK_block
+        #     self.logger.info('{} DOFS is {:.3f}'.format(state_dict['name'],AVK_block.trace()))
+        #     self.logger.info('{} surface column AVK is {:.3f}'.format(state_dict['name'],column_AVK[0]))
 
 
 class CrIS_Pixel(dict):
