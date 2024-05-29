@@ -1078,55 +1078,18 @@ class LSA(object):
             ]
         params.get_column_metrics(gas_names, self.h)
         self.params = params
-        # nstates = np.sum([d['nstate'] for d in self.state_dicts])
-        # K = np.concatenate([d['jac'] for d in self.state_dicts],axis=1)
-        # Sa = np.zeros((nstates,nstates))
-        # count = 0
-        # for d in self.state_dicts:
-        #     Sa[count:count+d['nstate'],count:count+d['nstate']] = d['prior_error_matrix']
-        #     count += d['nstate']
-        # Sy = np.diag(np.square(self.radiance_error))
-        # G = Sa@K.T@np.linalg.inv(K@Sa@K.T+Sy)
-        # A = G@K
-        # Shat = np.linalg.inv(K.T@np.linalg.inv(Sy)@K+np.linalg.inv(Sa))
-        # self.Sa = Sa
-        # self.G = G
-        # self.A = A
-        # self.dofs = A.trace()
-        # self.column_AVK = self.h@self.A/self.h
-        # self.Shat = Shat
-        # self.Sm = G@Sy@G.T
-        # # loop over state vector to calculate X{gas} error
-        # for state_dict in self.state_dicts:
-        #     if len(self.h) != state_dict['nstate']:continue
-        #     Shat_block = Shat[state_dict['state_start_idx']:state_dict['state_start_idx']+state_dict['nstate'],
-        #                       state_dict['state_start_idx']:state_dict['state_start_idx']+state_dict['nstate']]
-        #     Sm_block = self.Sm[state_dict['state_start_idx']:state_dict['state_start_idx']+state_dict['nstate'],
-        #                       state_dict['state_start_idx']:state_dict['state_start_idx']+state_dict['nstate']]
-        #     AVK_block = A[state_dict['state_start_idx']:state_dict['state_start_idx']+state_dict['nstate'],
-        #                       state_dict['state_start_idx']:state_dict['state_start_idx']+state_dict['nstate']]
-            
-        #     xerror = np.sqrt(self.h@Shat_block@self.h)
-        #     self.logger.info('X{} error is {:.3E}'.format(state_dict['name'],xerror))
-        #     state_dict['X{}_error'.format(state_dict['name'])] = xerror
-            
-        #     xerror_m = np.sqrt(self.h@self.Sm@self.h)
-        #     self.logger.info('X{} measurement error is {:.3E}'.format(state_dict['name'],xerror_m))
-        #     state_dict['X{}_errorm'.format(state_dict['name'])] = xerror_m
-            
-        #     column_AVK = self.h@AVK_block/self.h
-        #     state_dict['{}_column_AVK'.format(state_dict['name'])] = column_AVK
-        #     state_dict['{}_AVK'.format(state_dict['name'])] = AVK_block
-        #     self.logger.info('{} DOFS is {:.3f}'.format(state_dict['name'],AVK_block.trace()))
-        #     self.logger.info('{} surface column AVK is {:.3f}'.format(state_dict['name'],column_AVK[0]))
 
-
-class CrIS_Pixel(dict):
-    def __init__(self,l1_filename,N2O_filename,T_filename):
+class CrIS(dict):
+    def __init__(self,l1_filename,l2_keys,
+                 l2_filenames=None,
+                 l2_path_pattern=None):
         self.logger = logging.getLogger(__name__)
         self.nc1 = Dataset(l1_filename,'r')
-        self.nc2_N2O = Dataset(N2O_filename,'r')
-        self.nc2_T = Dataset(T_filename,'r')
+        self.l2_keys = l2_keys
+        if l2_filenames is None:
+            l2_filenames = [l2_path_pattern.replace('*',key) 
+                            for key in l2_keys]
+        self.nc2s = [Dataset(l2_filename,'r') for l2_filename in l2_filenames]
         
     def load_pixel(self,atrack_1based=27,
                    xtrack_1based=15,fov_1based=7,granule_number=191):
@@ -1156,31 +1119,53 @@ class CrIS_Pixel(dict):
         self['wnum_sw'] = wnum_sw
         self['wvl_sw'] = wvl_sw
         self['rad_sw'] = rad_sw
-        l2_mask = (self.nc2_N2O['Geolocation/CrIS_Granule'][:] == granule_number)&\
-                  (self.nc2_N2O['Geolocation/CrIS_Atrack_Index'][:] == atrack_1based-1)&\
-                  (self.nc2_N2O['Geolocation/CrIS_Xtrack_Index'][:] == xtrack_1based-1)&\
-                  (self.nc2_N2O['Geolocation/CrIS_Pixel_Index'][:] == fov_1based-1)
+        l2_mask = (self.nc2s[0]['Geolocation/CrIS_Granule'][:] == granule_number)&\
+                  (self.nc2s[0]['Geolocation/CrIS_Atrack_Index'][:] == atrack_1based-1)&\
+                  (self.nc2s[0]['Geolocation/CrIS_Xtrack_Index'][:] == xtrack_1based-1)&\
+                  (self.nc2s[0]['Geolocation/CrIS_Pixel_Index'][:] == fov_1based-1)
         if np.sum(l2_mask) != 1:
             self.logger.error('{} l2 pixel found'.format(np.sum(l2_mask)))
             return
-        pressure = self.nc2_N2O['Pressure'][l2_mask,:][0,:]
-        N2O = self.nc2_N2O['Species'][l2_mask,:][0,:]
-        T = self.nc2_T['Species'][l2_mask,:][0,:]
+        pressure = self.nc2s[0]['Pressure'][l2_mask,:][0,:]
         mask = pressure > 0# remove -999
-        self['pressure'] = pressure[mask]
-        self['N2O'] = N2O[mask]
-        self['T'] = T[mask]
-        self['Ts'] = self.nc2_N2O['Retrieval/SurfaceTemperature'][l2_mask]
-        self['emissivity'] = self.nc2_N2O['Characterization/Emissivity'][l2_mask,:][0,:]
-        self['wnum_emissivity'] = self.nc2_N2O['Characterization/Emissivity_Wavenumber'][l2_mask,:][0,:]
+        self['Pressure'] = pressure[mask]
+        
+        for l2_key, nc2 in zip(self.l2_keys,self.nc2s):
+            self[l2_key] = nc2['Species'][l2_mask,:][0,:][mask]
+            self[l2_key+'_Prior'] = nc2[
+                'ConstraintVector'][l2_mask,:][0,:][mask]
+            self[l2_key+'_PriorCovariance'] = nc2[
+                'Characterization/PriorCovariance'][l2_mask,:,:][0,::][
+                np.ix_(mask,mask)]
+            self[l2_key+'_ObservationErrorCovariance'] = nc2[
+                'ObservationErrorCovariance'][l2_mask,:,:][0,::][
+                np.ix_(mask,mask)]
+            self[l2_key+'_TotalErrorCovariance'] = nc2[
+                'Characterization/TotalErrorCovariance'][l2_mask,:,:][0,::][
+                np.ix_(mask,mask)]
+        
+            for cov_key in ['PriorCovariance',
+                            'ObservationErrorCovariance',
+                            'TotalErrorCovariance']:
+                fld_key = l2_key+'_'+cov_key
+                std_dev = np.sqrt(np.diag(self[fld_key]))
+                std_outer = np.outer(std_dev,std_dev)
+                self[fld_key.replace('Covariance','Corr')] = \
+                    self[fld_key] / std_outer
+        
+        self['Ts'] = self.nc2s[0]['Retrieval/SurfaceTemperature'][l2_mask]
+        self['Ts_Prior'] = self.nc2s[0]['Characterization/SurfaceTempConstraint'][l2_mask]
+        self['Ts_ObservationError'] = self.nc2s[0]['Characterization/SurfaceTempObservationError'][l2_mask]
+        self['emissivity'] = self.nc2s[0]['Characterization/Emissivity'][l2_mask,:][0,:]
+        self['wnum_emissivity'] = self.nc2s[0]['Characterization/Emissivity_Wavenumber'][l2_mask,:][0,:]
         self['wvl_emissivity'] = 1e7/self['wnum_emissivity']
-        l2_latlon = np.array([self.nc2_N2O['Longitude'][l2_mask],self.nc2_N2O['Latitude'][l2_mask]])
+        l2_latlon = np.array([self.nc2s[0]['Longitude'][l2_mask],self.nc2s[0]['Latitude'][l2_mask]])
         l1_latlon = np.array([self.nc1['lon'][:][l1_mask],self.nc1['lat'][:][l1_mask]])
         np.testing.assert_array_equal(l1_latlon, l2_latlon)
-        self['lon'] = self.nc2_N2O['Longitude'][l2_mask]
-        self['lat'] = self.nc2_N2O['Latitude'][l2_mask]
+        self['lon'] = self.nc2s[0]['Longitude'][l2_mask]
+        self['lat'] = self.nc2s[0]['Latitude'][l2_mask]
         
     def close_nc(self):
         self.nc1.close()
-        self.nc2_N2O.close()
-        self.nc2_T.close()
+        for nc2 in self.nc2s:
+            nc2.close()
