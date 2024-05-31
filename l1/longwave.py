@@ -262,12 +262,12 @@ class Longwave(object):
         self.Ts = Ts or self.profiles['T_level'][np.argmin(self.profiles['z_level'])]+TC
         self.emissivity = emissivity
         self.vza = vza
-    
+    # need rewriting
     def replace_with_CrIS(self,cris_obj=None,l1_filename=None,
                           N2O_filename=None,T_filename=None):
         '''replace N2O/T/Ts with CrIS data'''
-        if not isinstance(cris_obj,CrIS_Pixel):
-            cris_obj = CrIS_Pixel(l1_filename,N2O_filename,T_filename)
+        if not isinstance(cris_obj,CrIS):
+            cris_obj = CrIS(l1_filename,N2O_filename,T_filename)
             cris_obj.load_pixel()
         f = interp1d(cris_obj['pressure'], cris_obj['N2O'],
                      bounds_error=False,fill_value='extrapolate')
@@ -1051,7 +1051,7 @@ class LSA(object):
                     start_x = 0
                 else:
                     start_x = np.sum(nstates[0:ipar])
-                
+                setattr(params[name],'start_idx',start_x)
                 K[start_y:start_y+np.sum(mask),start_x:start_x+nstate] =\
                     band.jacs[name].T
         
@@ -1090,7 +1090,43 @@ class CrIS(dict):
             l2_filenames = [l2_path_pattern.replace('*',key) 
                             for key in l2_keys]
         self.nc2s = [Dataset(l2_filename,'r') for l2_filename in l2_filenames]
-        
+    
+    def sample_profile(self,sample_pressure,l2_keys):
+        '''sample CrIS profile to a new pressure grid
+        sample_pressure:
+            new pressure grid, has to be strictly descending: sfc -> toa
+        l2_keys:
+            CrIS profile names, N2O, CH4, H2O, TATM
+        '''
+        x0s = self['Pressure']
+        x1s = sample_pressure
+        self['sampled_Pressure'] = x1s
+        # x0s and x1s have to be strictly descending: pressure sfc -> toa
+        gamma_matrix = np.zeros((len(x1s),len(x0s)))
+        for ix1,x1 in enumerate(x1s):
+            if x1 >= x0s[0]:
+                gamma_matrix[ix1,0] = 1.
+                continue
+            if x1 <= x0s[-1]:
+                gamma_matrix[ix1,-1] = 1.
+                continue
+            nearest_index = np.argmin(np.abs(x0s-x1))
+            nearest_x0 = x0s[nearest_index]
+            if nearest_x0 >= x1:
+                next_index = nearest_index + 1
+            else:
+                next_index = nearest_index - 1
+            next_x0 = x0s[next_index]
+            nearest_weight = 1/np.abs(x1-nearest_x0)
+            next_weight = 1/np.abs(x1-next_x0)
+            gamma_matrix[ix1,nearest_index] = nearest_weight/(nearest_weight+next_weight)
+            gamma_matrix[ix1,next_index] = next_weight/(nearest_weight+next_weight)
+        self['gamma_matrix'] = gamma_matrix
+        for key in l2_keys:
+            self['sampled_{}'.format(key)] = gamma_matrix@self[key]
+            self['sampled_{}_PriorCovariance'.format(key)] = \
+                gamma_matrix@self[key+'_PriorCovariance']@gamma_matrix.T
+    
     def load_pixel(self,atrack_1based=27,
                    xtrack_1based=15,fov_1based=7,granule_number=191):
         self.atrack_1based = atrack_1based
@@ -1105,13 +1141,13 @@ class CrIS(dict):
         if np.sum(l1_mask) != 1:
             self.logger.error('{} l1 pixel found'.format(np.sum(l1_mask)))
             return
-        wnum_mw = self.nc1['wnum_mw'][:]
+        wnum_mw = self.nc1['wnum_mw'][:].data
         wvl_mw = 1e7/wnum_mw
-        rad_mw = self.nc1['rad_mw'][:][l1_mask][0,:]*\
+        rad_mw = self.nc1['rad_mw'][:][l1_mask][0,:].data*\
             wnum_mw/wvl_mw*1e-3/(PLANCK_CONSTANT*LIGHT_SPEED/wvl_mw*1e9)*1e-4
-        wnum_sw = self.nc1['wnum_sw'][:]
+        wnum_sw = self.nc1['wnum_sw'][:].data
         wvl_sw = 1e7/wnum_sw
-        rad_sw = self.nc1['rad_sw'][:][l1_mask][0,:]*\
+        rad_sw = self.nc1['rad_sw'][:][l1_mask][0,:].data*\
             wnum_sw/wvl_sw*1e-3/(PLANCK_CONSTANT*LIGHT_SPEED/wvl_sw*1e9)*1e-4
         self['wnum_mw'] = wnum_mw
         self['wvl_mw'] = wvl_mw
@@ -1126,23 +1162,23 @@ class CrIS(dict):
         if np.sum(l2_mask) != 1:
             self.logger.error('{} l2 pixel found'.format(np.sum(l2_mask)))
             return
-        pressure = self.nc2s[0]['Pressure'][l2_mask,:][0,:]
+        pressure = self.nc2s[0]['Pressure'][l2_mask,:][0,:].data
         mask = pressure > 0# remove -999
         self['Pressure'] = pressure[mask]
         
         for l2_key, nc2 in zip(self.l2_keys,self.nc2s):
-            self[l2_key] = nc2['Species'][l2_mask,:][0,:][mask]
+            self[l2_key] = nc2['Species'][l2_mask,:][0,:][mask].data
             self[l2_key+'_Prior'] = nc2[
-                'ConstraintVector'][l2_mask,:][0,:][mask]
+                'ConstraintVector'][l2_mask,:][0,:][mask].data
             self[l2_key+'_PriorCovariance'] = nc2[
                 'Characterization/PriorCovariance'][l2_mask,:,:][0,::][
-                np.ix_(mask,mask)]
+                np.ix_(mask,mask)].data
             self[l2_key+'_ObservationErrorCovariance'] = nc2[
                 'ObservationErrorCovariance'][l2_mask,:,:][0,::][
-                np.ix_(mask,mask)]
+                np.ix_(mask,mask)].data
             self[l2_key+'_TotalErrorCovariance'] = nc2[
                 'Characterization/TotalErrorCovariance'][l2_mask,:,:][0,::][
-                np.ix_(mask,mask)]
+                np.ix_(mask,mask)].data
         
             for cov_key in ['PriorCovariance',
                             'ObservationErrorCovariance',
@@ -1153,17 +1189,21 @@ class CrIS(dict):
                 self[fld_key.replace('Covariance','Corr')] = \
                     self[fld_key] / std_outer
         
-        self['Ts'] = self.nc2s[0]['Retrieval/SurfaceTemperature'][l2_mask]
-        self['Ts_Prior'] = self.nc2s[0]['Characterization/SurfaceTempConstraint'][l2_mask]
-        self['Ts_ObservationError'] = self.nc2s[0]['Characterization/SurfaceTempObservationError'][l2_mask]
-        self['emissivity'] = self.nc2s[0]['Characterization/Emissivity'][l2_mask,:][0,:]
-        self['wnum_emissivity'] = self.nc2s[0]['Characterization/Emissivity_Wavenumber'][l2_mask,:][0,:]
+        self['Ts'] = self.nc2s[0]['Retrieval/SurfaceTemperature'][l2_mask].data
+        self['Ts_Prior'] = self.nc2s[0][
+            'Characterization/SurfaceTempConstraint'][l2_mask].data
+        self['Ts_ObservationError'] = self.nc2s[0][
+            'Characterization/SurfaceTempObservationError'][l2_mask].data
+        self['emissivity'] = self.nc2s[0][
+            'Characterization/Emissivity'][l2_mask,:][0,:].data
+        self['wnum_emissivity'] = self.nc2s[0][
+            'Characterization/Emissivity_Wavenumber'][l2_mask,:][0,:].data
         self['wvl_emissivity'] = 1e7/self['wnum_emissivity']
         l2_latlon = np.array([self.nc2s[0]['Longitude'][l2_mask],self.nc2s[0]['Latitude'][l2_mask]])
         l1_latlon = np.array([self.nc1['lon'][:][l1_mask],self.nc1['lat'][:][l1_mask]])
         np.testing.assert_array_equal(l1_latlon, l2_latlon)
-        self['lon'] = self.nc2s[0]['Longitude'][l2_mask]
-        self['lat'] = self.nc2s[0]['Latitude'][l2_mask]
+        self['lon'] = self.nc2s[0]['Longitude'][l2_mask].data
+        self['lat'] = self.nc2s[0]['Latitude'][l2_mask].data
         
     def close_nc(self):
         self.nc1.close()
