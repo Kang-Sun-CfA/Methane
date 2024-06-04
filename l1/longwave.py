@@ -904,6 +904,27 @@ class Parameters(OrderedDict):
             count += par.nstate
         return xa, Sa, nstates, params_names
     
+    def get_interference_errors(self,A,h):
+        '''calculate interference errors between two parameters
+        A:
+            global averaging kernel matrix
+        h:
+            air mass weighting factor
+        '''
+        for (name,par) in self.items():
+            if not par.vary:
+                continue
+            # loop over interferers
+            for (name_i,par_i) in self.items():
+                if not par_i.vary or name_i == name:
+                    continue
+                avk_block = A[par.start_idx:par.start_idx+par.nstate,
+                              par_i.start_idx:par_i.start_idx+par_i.nstate]
+                Si = avk_block@par_i.prior_error_matrix@avk_block.T
+                setattr(par,f'{name_i}_interference_error_matrix', Si)
+                setattr(par,f'column_{name_i}_interference_error', 
+                        np.sqrt(h@Si@h))
+                
     def get_column_metrics(self,names,h):
         '''get column quantities of profiles
         names:
@@ -926,26 +947,24 @@ class Parameters(OrderedDict):
                     par.averaging_kernel.trace())
     
     def update_vectors(self,vector_name,vector):
-        count = 0
         for (name,par) in self.items():
             if not par.vary:
                 continue
-            new_values = vector[count:count+par.nstate]
+            new_values = vector[par.start_idx:par.start_idx+par.nstate]
             setattr(self[name],vector_name,new_values)
-            count = count+par.nstate
     
     def update_matrices(self,matrix_name,matrix):
-        count = 0
         for (name,par) in self.items():
             if not par.vary:
                 continue
             setattr(self[name],matrix_name,
-                    matrix[count:count+par.nstate,count:count+par.nstate])
-            count = count+par.nstate
+                    matrix[par.start_idx:par.start_idx+par.nstate,
+                           par.start_idx:par.start_idx+par.nstate])
 
 class Parameter:
     def __init__(self,name,prior,value=None,prior_error=None,
-                 correlation_km=None,z_km=None,vary=True):
+                 correlation_matrix=None,correlation_km=None,z_km=None,
+                 vary=True):
         '''initialize Parameter class
         name:
             name of the state vector component
@@ -955,6 +974,9 @@ class Parameter:
             current value, copy prior if none
         prior_error:
             prior error value(s) of the state component
+        correlation_matrix:
+            matrix of error correlation coefficient. if provided, 
+            correlation_km and z_km will not be used
         correlation_km:
             if it is a profile, use this correlation length to construct prior
             matrix
@@ -977,22 +999,27 @@ class Parameter:
         
         if np.isscalar(prior):
             self.nstate = 1
-            self.prior_error_matrix = self.prior_error**2
+            self.prior_error_matrix = np.array([[self.prior_error**2]])
             return
         self.nstate = len(prior)
-        self.prior_error_matrix = np.diag(self.prior_error**2)
-        self.correlation_km = correlation_km
-        if correlation_km is not None and z_km is not None:
-            for iz,(ape_i,z_i) in enumerate(zip(self.prior_error,z_km)):
-                for jz,(ape_j,z_j) in enumerate(zip(self.prior_error,z_km)):
-                    if iz == jz: 
-                        continue
-                    elif iz < jz:
-                        self.prior_error_matrix[iz,jz] = ape_i*ape_j*\
-                        np.exp(-np.abs(z_i-z_j)/correlation_km)
-                    else:# prior matrix is symmetric
-                        self.prior_error_matrix[iz,jz] =\
-                        self.prior_error_matrix[jz,iz]
+        
+        if correlation_matrix is not None:
+            self.prior_error_matrix = convert_cov_cor(cor=correlation_matrix,
+                                                      stds=self.prior_error)
+        else:
+            self.prior_error_matrix = np.diag(self.prior_error**2)
+            self.correlation_km = correlation_km
+            if correlation_km is not None and z_km is not None:
+                for iz,(ape_i,z_i) in enumerate(zip(self.prior_error,z_km)):
+                    for jz,(ape_j,z_j) in enumerate(zip(self.prior_error,z_km)):
+                        if iz == jz: 
+                            continue
+                        elif iz < jz:
+                            self.prior_error_matrix[iz,jz] = ape_i*ape_j*\
+                            np.exp(-np.abs(z_i-z_j)/correlation_km)
+                        else:# prior matrix is symmetric
+                            self.prior_error_matrix[iz,jz] =\
+                            self.prior_error_matrix[jz,iz]
 
 class LSA(object):
     def __init__(self,bands,param_names,band_weights=None):
@@ -1093,6 +1120,7 @@ class LSA(object):
                 )
             ]
         params.get_column_metrics(gas_names, self.h)
+        params.get_interference_errors(A, self.h)
         self.params = params
 
 class CrIS(dict):
@@ -1142,6 +1170,10 @@ class CrIS(dict):
             self['sampled_{}'.format(key)] = gamma_matrix@self[key]
             self['sampled_{}_PriorCovariance'.format(key)] = \
                 gamma_matrix@self[key+'_PriorCovariance']@gamma_matrix.T
+            self['sampled_{}_PriorError'.format(key)] = \
+                np.sqrt(
+                    np.diag(
+                        self['sampled_{}_PriorCovariance'.format(key)]))
             self['sampled_{}_PriorCorr'.format(key)] = convert_cov_cor(
                 cov=self['sampled_{}_PriorCovariance'.format(key)])
     
