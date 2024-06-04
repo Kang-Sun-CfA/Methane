@@ -159,6 +159,22 @@ def F_noise_model(radiance,dw,nsample,dt,dp,f_number,system_efficiency,readout_e
     SNR = S/N
     return SNR
 
+def convert_cov_cor(cov=None,cor=None,stds=None):
+    '''conversion between covariance matrix and correlation matrix/diag std
+    cov:
+        covariance matrix
+    cor:
+        correlation coefficient matrix
+    stds:
+        sqrt(diag(cov))
+    '''
+    if cov is None:
+        return np.outer(stds,stds) * cor
+    if cor is None:
+        if stds is None:
+            stds = np.sqrt(np.diag(cov))
+        return cov / np.outer(stds,stds)
+
 class Longwave(object):
     '''class representing a band in the longwave. Custom RTM based on EPS237'''
     def __init__(self,start_w,end_w,gas_names,
@@ -1126,6 +1142,8 @@ class CrIS(dict):
             self['sampled_{}'.format(key)] = gamma_matrix@self[key]
             self['sampled_{}_PriorCovariance'.format(key)] = \
                 gamma_matrix@self[key+'_PriorCovariance']@gamma_matrix.T
+            self['sampled_{}_PriorCorr'.format(key)] = convert_cov_cor(
+                cov=self['sampled_{}_PriorCovariance'.format(key)])
     
     def load_pixel(self,atrack_1based=27,
                    xtrack_1based=15,fov_1based=7,granule_number=191):
@@ -1184,10 +1202,8 @@ class CrIS(dict):
                             'ObservationErrorCovariance',
                             'TotalErrorCovariance']:
                 fld_key = l2_key+'_'+cov_key
-                std_dev = np.sqrt(np.diag(self[fld_key]))
-                std_outer = np.outer(std_dev,std_dev)
                 self[fld_key.replace('Covariance','Corr')] = \
-                    self[fld_key] / std_outer
+                    convert_cov_cor(cov=self[fld_key])
         
         self['Ts'] = self.nc2s[0]['Retrieval/SurfaceTemperature'][l2_mask].data
         self['Ts_Prior'] = self.nc2s[0][
