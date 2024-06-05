@@ -922,6 +922,8 @@ class Parameters(OrderedDict):
                               par_i.start_idx:par_i.start_idx+par_i.nstate]
                 Si = avk_block@par_i.prior_error_matrix@avk_block.T
                 setattr(par,f'{name_i}_interference_error_matrix', Si)
+                if par.nstate == 1:
+                    continue
                 setattr(par,f'column_{name_i}_interference_error', 
                         np.sqrt(h@Si@h))
                 
