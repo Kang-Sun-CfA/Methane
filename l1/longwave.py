@@ -278,28 +278,6 @@ class Longwave(object):
         self.Ts = Ts or self.profiles['T_level'][np.argmin(self.profiles['z_level'])]+TC
         self.emissivity = emissivity
         self.vza = vza
-    # need rewriting
-    def replace_with_CrIS(self,cris_obj=None,l1_filename=None,
-                          N2O_filename=None,T_filename=None):
-        '''replace N2O/T/Ts with CrIS data'''
-        if not isinstance(cris_obj,CrIS):
-            cris_obj = CrIS(l1_filename,N2O_filename,T_filename)
-            cris_obj.load_pixel()
-        f = interp1d(cris_obj['pressure'], cris_obj['N2O'],
-                     bounds_error=False,fill_value='extrapolate')
-        self.profiles['N2O'] = f(self.profiles['P_layer'])
-        f = interp1d(cris_obj['pressure'], cris_obj['T'],
-                     bounds_error=False,fill_value='extrapolate')
-        self.profiles['T_level'] = f(self.profiles['P_level'])
-        self.profiles = F_level2layer(self.profiles)
-        for ilayer in range(self.nlayer):
-            P = self.profiles['P_layer'][ilayer]*100.# hPa to Pa
-            T = self.profiles['T_layer'][ilayer]
-            B = self.profiles['H2O'][ilayer]
-            # air density in molec/cm3
-            self.profiles['air_density'][ilayer] = F_get_dry_air_density(P,T,B)
-        self.Ts = cris_obj['Ts']
-        self.emissivity = interp1d(cris_obj['wvl_emissivity'],cris_obj['emissivity'])
         
     def level2layer(self,keys=None):
         '''
@@ -1179,16 +1157,53 @@ class CrIS(dict):
             self['sampled_{}_PriorCorr'.format(key)] = convert_cov_cor(
                 cov=self['sampled_{}_PriorCovariance'.format(key)])
     
+    def update_splat_profile_nc(self,infile,l2_keys,outfile=None):
+        '''update the splat profile netcdf file using cris profiles
+        infile:
+            path to the template splat profile nc
+        l2_keys:
+            name of cris profiles to sample to splat pressure grid. 
+            TATM will be sampled to pedge, others pmid.
+            these will replace original profiles
+        '''
+        if outfile is None:
+            outfile = os.path.join(
+                os.path.split(infile)[0],'CrIS_{}.nc'.format(self.fov_obs_id)
+                )
+        os.system(f'cp {infile} {outfile}')
+        with Dataset(outfile,'r+') as nc:
+            P_level = nc['pedge'][:].squeeze().filled(np.nan)[::-1]
+            P_layer = np.nanmean(np.column_stack((P_level[:-1],P_level[1:])),1)
+            for l2_key in l2_keys:
+                if l2_key in ['TATM']:
+                    self.sample_profile(sample_pressure=P_level, 
+                                        l2_keys=['TATM'])
+                    nc['Tedge'][:] = self['sampled_TATM'][np.newaxis,
+                                                          ::-1,
+                                                          np.newaxis,
+                                                          np.newaxis]
+                else:
+                    self.sample_profile(sample_pressure=P_layer, 
+                                        l2_keys=[l2_key])
+                    nc[l2_key][:] = self[f'sampled_{l2_key}'][np.newaxis,
+                                                          ::-1,
+                                                          np.newaxis,
+                                                          np.newaxis]
+        return outfile
+    
     def load_pixel(self,atrack_1based=27,
-                   xtrack_1based=15,fov_1based=7,granule_number=191):
+                   xtrack_1based=15,fov_1based=7,granule_number=None):
+        
         self.atrack_1based = atrack_1based
         self.xtrack_1based = xtrack_1based
         self.fov_1based = fov_1based
-        self.granule_number = granule_number
+        self.granule_number = granule_number or \
+            int(self.nc1.product_name_granule_number[1:])
         pixel_l1_id = '{}.{:02d}E{:02d}.{:01d}'.format(self.nc1.gran_id,
                                                       atrack_1based,
                                                       xtrack_1based,
                                                       fov_1based)
+        self.fov_obs_id = pixel_l1_id
         l1_mask = self.nc1['fov_obs_id'][:] == pixel_l1_id
         if np.sum(l1_mask) != 1:
             self.logger.error('{} l1 pixel found'.format(np.sum(l1_mask)))
@@ -1207,7 +1222,7 @@ class CrIS(dict):
         self['wnum_sw'] = wnum_sw
         self['wvl_sw'] = wvl_sw
         self['rad_sw'] = rad_sw
-        l2_mask = (self.nc2s[0]['Geolocation/CrIS_Granule'][:] == granule_number)&\
+        l2_mask = (self.nc2s[0]['Geolocation/CrIS_Granule'][:] == self.granule_number)&\
                   (self.nc2s[0]['Geolocation/CrIS_Atrack_Index'][:] == atrack_1based-1)&\
                   (self.nc2s[0]['Geolocation/CrIS_Xtrack_Index'][:] == xtrack_1based-1)&\
                   (self.nc2s[0]['Geolocation/CrIS_Pixel_Index'][:] == fov_1based-1)
