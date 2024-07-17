@@ -704,6 +704,7 @@ class Shortwave(object):
         self.splat_path = splat_path
         self.working_dir = working_dir
         self.profile_path = profile_path
+        self.control_template_path = control_template_path
         profiles = {}
         self.logger.info(f'loading {profile_path}')
         # the profiles go from surface to toa, opposite from splat profiles
@@ -815,8 +816,7 @@ class Shortwave(object):
         profile_path = profile_path or self.profile_path
         output_path = output_path or os.path.join(self.working_dir,'splat_output.nc')
         control_path = control_path or os.path.join(self.working_dir,'splat_run.control')
-        control_template_path = control_template_path or \
-            os.path.join(self.working_dir,'control/forward_template.control')
+        control_template_path = control_template_path or self.control_template_path
         self.output_path = output_path
         self.control_path = control_path
         self.control_template_path = control_template_path
