@@ -8,6 +8,7 @@ Created on Wed Jan 17 16:42:34 2024
 
 from netCDF4 import Dataset
 import numpy as np
+import pandas as pd
 from matplotlib import pyplot as plt
 import logging
 logging.basicConfig(level=logging.INFO)
@@ -1115,6 +1116,50 @@ class CrIS(dict):
                             for key in l2_keys]
         self.nc2s = [Dataset(l2_filename,'r') for l2_filename in l2_filenames]
     
+    def find_pixels(self, west, south, east, north, 
+                    min_dofs=1, quality=1, land_flag=1):
+        granule_number = self.nc1.granule_number
+        self.logger.info(f'Level 1 granule number is {granule_number}')
+        nc2 = self.nc2s[0]
+        l2_mask = nc2['Geolocation/CrIS_Granule'][:] == granule_number
+        self.logger.info(f'There are {np.sum(l2_mask)} level 2 pixels in the granule')
+        
+        lon = nc2['Longitude'][:]
+        lat = nc2['Latitude'][:]
+        
+        lon_mask = (lon >= west) & (lon < east)
+        lat_mask = (lat >= south) & (lat < north)
+        
+        l2_mask = l2_mask & lat_mask & lon_mask
+        
+        for nc2 in self.nc2s:
+            l2_mask = l2_mask & \
+                (nc2['DOFs'][:] >= min_dofs) & \
+                    (nc2['Quality'][:] == quality) &\
+                        (nc2['LandFlag'][:] == land_flag)
+        self.logger.info(f'There are {np.sum(l2_mask)} level 2 pixels with further filtering')
+        
+        atrack = []
+        xtrack = []
+        fov = []
+        
+        for ipixel in range(np.sum(l2_mask)):
+            pixel_l2_atrack = self.nc2s[0]['Geolocation/CrIS_Atrack_Index'][l2_mask][ipixel] + 1
+            pixel_l2_xtrack = self.nc2s[0]['Geolocation/CrIS_Xtrack_Index'][l2_mask][ipixel] + 1
+            pixel_l2_fov = self.nc2s[0]['Geolocation/CrIS_Pixel_Index'][l2_mask][ipixel] + 1
+            
+            atrack.append(pixel_l2_atrack)
+            xtrack.append(pixel_l2_xtrack)
+            fov.append(pixel_l2_fov)
+        
+        pixel_df = pd.DataFrame({
+            'atrack': atrack,
+            'xtrack': xtrack,
+            'fov': fov
+        })
+        
+        return pixel_df
+        
     def sample_profile(self,sample_pressure,l2_keys):
         '''sample CrIS profile to a new pressure grid
         sample_pressure:
