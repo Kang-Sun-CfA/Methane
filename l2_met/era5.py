@@ -110,11 +110,13 @@ class era5(object):
         dates = [self.era5_start_datetime + datetime.timedelta(days=d) for d in range(days)]
         hour_str = ['%02d'%h+':00' for h in range(download_start_hour,download_end_hour+1)]
         cds_dict = {}
-        cds_dict['product_type'] = 'reanalysis'
+        cds_dict['product_type'] = ['reanalysis']
         cds_dict['grid'] = [0.25,0.25]
         cds_dict['time'] = hour_str
-        cds_dict['area'] = '%.1f'%self.north+'/'+'%.1f'%self.west+'/'+'%.1f'%self.south+'/'+'%.1f'%self.east
-        cds_dict['format'] = 'netcdf'
+        cds_dict['area'] = [self.north,self.west,self.south,self.east]
+        #'%.1f'%self.north+'/'+'%.1f'%self.west+'/'+'%.1f'%self.south+'/'+'%.1f'%self.east
+        cds_dict['data_format'] = 'netcdf'
+        cds_dict['download_format'] = 'unarchived'
         for icollection in range(len(file_collection_names)):
             file_collection_name = file_collection_names[icollection]
             file_collection_field = file_collection_fields[icollection]
@@ -126,9 +128,9 @@ class era5(object):
             else:
                 collection_header = ''
             for date in dates:
-                cds_dict['year'] = date.strftime("%Y")
-                cds_dict['month'] = date.strftime("%m")
-                cds_dict['day'] = date.strftime("%d")
+                cds_dict['year'] = [date.strftime("%Y")]
+                cds_dict['month'] = [date.strftime("%m")]
+                cds_dict['day'] = [date.strftime("%d")]
                 cds_dict['variable'] = file_collection_field
                 download_dir = os.path.join(self.era5_dir,date.strftime('Y%Y'),\
                                    date.strftime('M%m'),\
