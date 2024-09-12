@@ -8,6 +8,7 @@ Created on Wed Jan 17 16:42:34 2024
 
 from netCDF4 import Dataset
 import numpy as np
+import pandas as pd
 from matplotlib import pyplot as plt
 import logging
 logging.basicConfig(level=logging.INFO)
@@ -15,10 +16,28 @@ from scipy.interpolate import RegularGridInterpolator, interp1d
 from astropy.convolution import convolve_fft
 import sys,os,glob
 from collections import OrderedDict
+from scipy.constants import N_A, R
 
 PLANCK_CONSTANT = 6.62607004e-34
 BOLTZMANN_CONSTANT = 1.38064852e-23
 LIGHT_SPEED = 2.99792458e8
+
+GOSAT_AP = np.array([1.        , 0.92307692, 0.84615385, 0.76923077, 0.69230769,
+       0.61538462, 0.53846154, 0.46153846, 0.38461538, 0.30769231,
+       0.23076923, 0.15384615, 0.07692308, 0.        , 0.        ,
+       0.        , 0.        , 0.        , 0.        , 0.        ])
+GOSAT_BP = np.array([1. , 1. , 1. , 1. , 1. , 1. , 1. , 1. , 1. , 1. , 1. , 1. , 1. ,
+       1. , 0.5, 0. , 0. , 0. , 0. , 0. ])
+GOSAT_CP = np.array([ 0. ,  0. ,  0. ,  0. ,  0. ,  0. ,  0. ,  0. ,  0. ,  0. ,  0. ,
+        0. ,  0. ,  0. , 40. , 80. , 50. , 10. ,  1. ,  0.1])
+
+GOSAT_P = np.array([
+    1.01325000e+03, 9.50692308e+02, 8.88134615e+02, 8.25576923e+02,
+    7.63019231e+02, 7.00461538e+02, 6.37903846e+02, 5.75346154e+02,
+    5.12788462e+02, 4.50230769e+02, 3.87673077e+02, 3.25115385e+02,
+    2.62557692e+02, 2.00000000e+02, 1.40000000e+02, 8.00000000e+01,
+    5.00000000e+01, 1.00000000e+01, 1.00000000e+00, 1.00000000e-01
+])
 
 # In this "robust" version of arange the grid doesn't suffer 
 # from the shift of the nodes due to error accumulation.
@@ -175,6 +194,47 @@ def convert_cov_cor(cov=None,cor=None,stds=None):
             stds = np.sqrt(np.diag(cov))
         return cov / np.outer(stds,stds)
 
+def get_Gamma(x0s,x1s):
+    '''get a matrix to map profile defined at x0s to one defined at x1s
+    x0s:
+        original vertical coordinate
+    x1s:
+        target vertical coordinate
+    returns:
+        gamma_matrix
+    '''
+    gamma_matrix = np.zeros((len(x1s),len(x0s)))
+    if not np.all(x0s[:-1] >= x0s[1:]):
+        logging.error('x0s shall be descending!')
+        return
+    if not np.all(x1s[:-1] >= x1s[1:]):
+        logging.error('x1s shall be descending!')
+        return
+    for ix1,x1 in enumerate(x1s):
+        if x1 >= x0s[0]:
+            gamma_matrix[ix1,0] = 1.
+            continue
+        if x1 <= x0s[-1]:
+            gamma_matrix[ix1,-1] = 1.
+            continue
+        nearest_index = np.argmin(np.abs(x0s-x1))
+        nearest_x0 = x0s[nearest_index]
+        if nearest_x0 >= x1:
+            next_index = nearest_index + 1
+        else:
+            next_index = nearest_index - 1
+        next_x0 = x0s[next_index]
+        if x1 == nearest_x0:
+            nearest_weight = 1.
+            next_weight = 0.
+        else:
+            nearest_weight = 1/np.abs(x1-nearest_x0)
+            next_weight = 1/np.abs(x1-next_x0)
+        gamma_matrix[ix1,nearest_index] = nearest_weight/(nearest_weight+next_weight)
+        gamma_matrix[ix1,next_index] = next_weight/(nearest_weight+next_weight)
+
+    return gamma_matrix
+
 class Longwave(object):
     '''class representing a band in the longwave. Custom RTM based on EPS237'''
     def __init__(self,start_w,end_w,gas_names,
@@ -257,12 +317,23 @@ class Longwave(object):
             if 'H2O' not in gas_names:
                 profiles['H2O'] = nc['H2O'][:].squeeze().filled(np.nan)[::-1]
         
-        # somehow there is no alitutde in the test_profile.nc file
-        profiles['z_level'] = np.array([80.0,60.0,55.0,50.0,47.5,45.0,42.5,40.0,\
-                               37.5,35.0,32.5,30.0,27.5,25.0,24.0,23.0,\
-                               22.0,21.0,20.0,19.0,18.0,17.0,16.0,15.0,\
-                               14.0,13.0,12.0,11.0,10.0,9.0,8.0,7.0,6.0,\
-                               5.0,4.0,3.0,2.0,1.0,0.0])[::-1]
+        # translate to ccm's variable name, pedge_us is toa->sfc
+        pedge_us = profiles['P_level'][::-1]
+        Tedge_us = profiles['T_level'][::-1]
+        lmx = pedge_us.shape[0]-1
+        # Vertical grid
+        H = R*Tedge_us/9.81/28.97e-3
+        # zedge is also toa->sfc
+        zedge = np.zeros_like(Tedge_us)
+        for l in range(lmx-1,-1,-1):
+            zedge[l] = zedge[l+1] + H[l+1]*1e-3*np.log(pedge_us[l+1]/pedge_us[l])
+        profiles['z_level'] = zedge[::-1]  
+        # # somehow there is no alitutde in the test_profile.nc file
+        # profiles['z_level'] = np.array([80.0,60.0,55.0,50.0,47.5,45.0,42.5,40.0,\
+        #                        37.5,35.0,32.5,30.0,27.5,25.0,24.0,23.0,\
+        #                        22.0,21.0,20.0,19.0,18.0,17.0,16.0,15.0,\
+        #                        14.0,13.0,12.0,11.0,10.0,9.0,8.0,7.0,6.0,\
+        #                        5.0,4.0,3.0,2.0,1.0,0.0])[::-1]
         profiles = F_level2layer(profiles)
         profiles['dz'] = np.abs(profiles['z_level_calc'][1:]-profiles['z_level_calc'][:-1])
         profiles['air_density'] = np.zeros(profiles['dz'].shape,dtype=np.float64)
@@ -704,6 +775,7 @@ class Shortwave(object):
         self.splat_path = splat_path
         self.working_dir = working_dir
         self.profile_path = profile_path
+        self.control_template_path = control_template_path
         profiles = {}
         self.logger.info(f'loading {profile_path}')
         # the profiles go from surface to toa, opposite from splat profiles
@@ -715,12 +787,23 @@ class Shortwave(object):
             if 'H2O' not in gas_names:
                 profiles['H2O'] = nc['H2O'][:].squeeze().filled(np.nan)[::-1]
         
-        # somehow there is no alitutde in the test_profile.nc file
-        profiles['z_level'] = np.array([80.0,60.0,55.0,50.0,47.5,45.0,42.5,40.0,\
-                               37.5,35.0,32.5,30.0,27.5,25.0,24.0,23.0,\
-                               22.0,21.0,20.0,19.0,18.0,17.0,16.0,15.0,\
-                               14.0,13.0,12.0,11.0,10.0,9.0,8.0,7.0,6.0,\
-                               5.0,4.0,3.0,2.0,1.0,0.0])[::-1]
+        # translate to ccm's variable name, pedge_us is toa->sfc
+        pedge_us = profiles['P_level'][::-1]
+        Tedge_us = profiles['T_level'][::-1]
+        lmx = pedge_us.shape[0]-1
+        # Vertical grid
+        H = R*Tedge_us/9.81/28.97e-3
+        # zedge is also toa->sfc
+        zedge = np.zeros_like(Tedge_us)
+        for l in range(lmx-1,-1,-1):
+            zedge[l] = zedge[l+1] + H[l+1]*1e-3*np.log(pedge_us[l+1]/pedge_us[l])
+        profiles['z_level'] = zedge[::-1]  
+        # # somehow there is no alitutde in the test_profile.nc file
+        # profiles['z_level'] = np.array([80.0,60.0,55.0,50.0,47.5,45.0,42.5,40.0,\
+        #                        37.5,35.0,32.5,30.0,27.5,25.0,24.0,23.0,\
+        #                        22.0,21.0,20.0,19.0,18.0,17.0,16.0,15.0,\
+        #                        14.0,13.0,12.0,11.0,10.0,9.0,8.0,7.0,6.0,\
+        #                        5.0,4.0,3.0,2.0,1.0,0.0])[::-1]
         profiles = F_level2layer(profiles)
         profiles['dz'] = np.abs(profiles['z_level_calc'][1:]-profiles['z_level_calc'][:-1])
         profiles['air_density'] = np.zeros(profiles['dz'].shape,dtype=np.float64)
@@ -815,8 +898,7 @@ class Shortwave(object):
         profile_path = profile_path or self.profile_path
         output_path = output_path or os.path.join(self.working_dir,'splat_output.nc')
         control_path = control_path or os.path.join(self.working_dir,'splat_run.control')
-        control_template_path = control_template_path or \
-            os.path.join(self.working_dir,'control/forward_template.control')
+        control_template_path = control_template_path or self.control_template_path
         self.output_path = output_path
         self.control_path = control_path
         self.control_template_path = control_template_path
@@ -1115,6 +1197,54 @@ class CrIS(dict):
                             for key in l2_keys]
         self.nc2s = [Dataset(l2_filename,'r') for l2_filename in l2_filenames]
     
+    def find_pixels(self, west, south, east, north, 
+                    min_dofs=1, quality=1, land_flag=1):
+        granule_number = self.nc1.granule_number
+        self.logger.info(f'Level 1 granule number is {granule_number}')
+        nc2 = self.nc2s[0]
+        l2_mask = nc2['Geolocation/CrIS_Granule'][:] == granule_number
+        self.logger.info(f'There are {np.sum(l2_mask)} level 2 pixels in the granule')
+        
+        lon = nc2['Longitude'][:]
+        lat = nc2['Latitude'][:]
+        
+        lon_mask = (lon >= west) & (lon < east)
+        lat_mask = (lat >= south) & (lat < north)
+        
+        l2_mask = l2_mask & lat_mask & lon_mask
+        
+        for nc2 in self.nc2s:
+            l2_mask = l2_mask & \
+                (nc2['DOFs'][:] >= min_dofs) & \
+                    (nc2['Quality'][:] == quality) &\
+                        (nc2['LandFlag'][:] == land_flag)
+        self.logger.info(f'There are {np.sum(l2_mask)} level 2 pixels with further filtering')
+        
+        atrack = []
+        xtrack = []
+        fov = []
+        
+        atracks = self.nc2s[0]['Geolocation/CrIS_Atrack_Index'][l2_mask]
+        xtracks = self.nc2s[0]['Geolocation/CrIS_Xtrack_Index'][l2_mask]
+        fovs = self.nc2s[0]['Geolocation/CrIS_Pixel_Index'][l2_mask]
+        
+        for ipixel in range(np.sum(l2_mask)):
+            pixel_l2_atrack = atracks[ipixel] + 1
+            pixel_l2_xtrack = xtracks[ipixel] + 1
+            pixel_l2_fov = fovs[ipixel] + 1
+            
+            atrack.append(pixel_l2_atrack)
+            xtrack.append(pixel_l2_xtrack)
+            fov.append(pixel_l2_fov)
+        
+        pixel_df = pd.DataFrame({
+            'atrack': atrack,
+            'xtrack': xtrack,
+            'fov': fov
+        })
+        
+        return pixel_df
+        
     def sample_profile(self,sample_pressure,l2_keys):
         '''sample CrIS profile to a new pressure grid
         sample_pressure:
@@ -1157,6 +1287,153 @@ class CrIS(dict):
             self['sampled_{}_PriorCorr'.format(key)] = convert_cov_cor(
                 cov=self['sampled_{}_PriorCovariance'.format(key)])
     
+    def save_splat_profile_like_GOSAT(self,pysplat_dir,
+                                      file_dir=None,l2_keys=None,file_path=None):
+        '''sample the cris posterior profiles into 20 level/19 layers, defined
+        by GOSAT ap/bp/cp. then save these profiles in splat profile nc format
+        '''
+        sys.path.append(pysplat_dir)
+        from apriori import profile as Profile
+        if file_path is None:
+            file_path = os.path.join(file_dir,'CrIS_{}.nc'.format(self.fov_obs_id)
+                )
+        if l2_keys is None:
+            l2_keys=['N2O','CH4','H2O','TATM']
+        
+        # cris pixel surface pressure
+        cris_psurf = self['Pressure'][0]
+        # calculate GOSAT pressure level
+        # assuming constant tropopause pressure for simplicity
+        cris_ptrop = 200.
+        # 20-level pressure
+        P_level = GOSAT_AP*(cris_psurf-cris_ptrop) + GOSAT_BP*cris_ptrop + GOSAT_CP
+        # 19-layer pressure
+        P_layer = np.nanmean(np.column_stack((P_level[:-1],P_level[1:])),1)
+        self['sampled_plevel'] = P_level
+        self['sampled_player'] = P_layer
+        gamma_matrix_plevel = get_Gamma(x0s=self['Pressure'],x1s=P_level)
+        self['sampled_Tlevel'] = gamma_matrix_plevel@self['TATM']
+        gamma_matrix = get_Gamma(x0s=self['Pressure'],x1s=P_layer)
+        # self['sampled_TATM'] = gamma_matrix@self['TATM']
+        for l2_key in l2_keys:
+            self['sampled_{}'.format(l2_key)] = gamma_matrix@self[l2_key]
+            self['sampled_{}_PriorCovariance'.format(l2_key)] = \
+                gamma_matrix@self[l2_key+'_PriorCovariance']@gamma_matrix.T
+            self['sampled_{}_PriorError'.format(l2_key)] = \
+                np.sqrt(
+                    np.diag(
+                        self['sampled_{}_PriorCovariance'.format(l2_key)]))
+            self['sampled_{}_PriorCorr'.format(l2_key)] = convert_cov_cor(
+                cov=self['sampled_{}_PriorCovariance'.format(l2_key)])
+        
+        # translate to ccm's variable name, pedge_us is toa->sfc
+        pedge_us = self['sampled_plevel'][::-1]
+        Tedge_us = self['sampled_Tlevel'][::-1]
+        # Make up a geolocation grid
+        imx = 1
+        jmx = 1
+        lmx = pedge_us.shape[0]-1
+        tmx = 1
+
+        # Vertical grid
+        H = R*Tedge_us/9.81/28.97e-3
+        zedge = np.zeros_like(Tedge_us)
+        for l in range(lmx-1,-1,-1):
+            zedge[l] = zedge[l+1] + H[l+1]*1e-3*np.log(pedge_us[l+1]/pedge_us[l])
+        # zmid = 0.5*(zedge[1:]+zedge[0:-1])
+        xedge = np.linspace(-180.0,180.0,imx+1)
+        yedge = np.linspace(-90.0,90.0,jmx+1)
+        xmid = 0.5*(xedge[0:imx]+xedge[1:imx+1])
+        ymid = 0.5*(yedge[0:jmx]+yedge[1:jmx+1])
+        time = np.zeros(tmx)
+        pedge = np.zeros((imx,jmx,lmx+1,tmx))
+        Tedge = np.zeros((imx,jmx,lmx+1,tmx))
+        zsurf = np.zeros((imx,jmx))
+        for l in range(lmx+1):
+            pedge[:,:,l,:] = pedge_us[l]
+            Tedge[:,:,l,:] = Tedge_us[l]
+        # Initialize output profile
+        prof = Profile(file_path,xmid,ymid,time,xedge,yedge,pedge,Tedge,zsurf)
+
+        # Add Temperature error covariance
+        Tmid_err = np.ones((1,1,lmx,1))*0.01
+        prof.add_T_prior(Tmid_err,ErrorType='DIAGONAL')
+
+        # Temperature shift
+        Tshift_err = np.ones((1,1,1))*4.0
+        prof.add_Tshift_prior(Tshift_err)
+
+        # Add surface pressure error
+        psurf_err = np.ones((1,1,1))*4.0
+        prof.add_psurf_prior(psurf_err)
+
+        prof.add_profile_var('N2', 0.78084*np.ones((1,1,lmx,1)))
+        prof.add_profile_var('O2', 0.20946*np.ones((1,1,lmx,1)))
+        prof.add_profile_var('Ar', 0.00934*np.ones((1,1,lmx,1)))
+        prof.add_profile_var('CO2', 0.0004*np.ones((1,1,lmx,1)))
+        prof.add_diagonal_prof_prior('CO2', Sdiag=np.ones((imx,jmx,lmx,1)))
+        # Add some zeroed species as a kludge for now
+        var = np.zeros((1,1,lmx,1))
+        for subgas in ['CO','OCS','O3','NO2','NO','HNO3','O2DG','PA1',
+                       'HCHO','SO2','BrO','IO','GLYX']:
+            prof.add_profile_var(subgas,var)
+            prof.add_diagonal_prof_prior(name=subgas, Sdiag=np.ones((imx,jmx,lmx,1)))
+
+
+        for gas_name in l2_keys:
+            if gas_name == 'TATM':
+                continue
+            vmr = np.zeros((imx,jmx,lmx,1))
+            for l in range(lmx):
+                vmr[:,:,l,0] = self['sampled_{}'.format(gas_name)][lmx-1-l]
+            prof.add_profile_var(name=gas_name, var=vmr)
+            prof.add_diagonal_prof_prior(name=gas_name, Sdiag=np.ones((imx,jmx,lmx,1)))
+
+        # SULFATE
+        aod = np.ones((imx,jmx,1))*2.0
+        aod_err = np.ones((imx,jmx,1))*0.2*2.0
+        zmin = np.ones((imx,jmx,1))*2.0
+        zmax = np.ones((imx,jmx,1))*6.0
+
+        # Alpha
+        alpha = np.ones((imx,jmx,1,1))*3.0
+        alpha_err = np.ones((1,1,1))*1.0 #Scol_diag_kludge(pedge,alpha,3.0,is_mixratio=False)
+
+        prof.add_box_aerosol('SU',aod,zmin,zmax)
+        prof.add_box_prior('SU', aod_err)
+
+        # Add a test aerosol optical property parameter
+        prof.add_aeroptprop_var('SU_alpha',alpha,shift_err=alpha_err)
+        # prof.add_diagonal_prof_prior('SU_alpha',alpha_err)
+
+        # Make OC,BC,SF,SC the same
+        prof.add_box_aerosol('OC',aod,zmin,zmax)
+        prof.add_box_prior('OC', aod_err)
+        prof.add_box_aerosol('BC',aod,zmin,zmax)
+        prof.add_box_prior('BC', aod_err)
+        prof.add_box_aerosol('SF',aod,zmin,zmax)
+        prof.add_box_prior('SF', aod_err)
+        prof.add_box_aerosol('SC',aod,zmin,zmax)
+        prof.add_box_prior('SC', aod_err)
+
+        # DUST
+        aod = np.ones((imx,jmx,1))*1.0
+        aod_err = np.ones((imx,jmx,1))*10.0
+        pkhght = np.ones((imx,jmx,1))*1.0
+        pkhght_err = np.ones((imx,jmx,1))*10.0
+        pkwdth = np.ones((imx,jmx,1))*0.5
+        pkwdth_err = np.ones((imx,jmx,1))*10.0
+
+        zmin = np.ones((imx,jmx,1))*0.0
+        zmax = np.ones((imx,jmx,1))*50.0
+
+        prof.add_gdf_aerosol('DU', aod, zmin, zmax, pkhght, pkwdth)
+        prof.add_gdf_prior('DU', aod_err, pkhght_err, pkwdth_err)
+
+        prof.close()
+        
+        return file_path
+        
     def update_splat_profile_nc(self,infile,l2_keys,outfile=None):
         '''update the splat profile netcdf file using cris profiles
         infile:
