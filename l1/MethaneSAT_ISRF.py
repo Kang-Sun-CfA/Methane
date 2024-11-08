@@ -170,7 +170,7 @@ def F_stray_light_input_msat(strayLightKernelPath,rowExtents,colExtents,rowCente
     
     return peak_kernel, ghost_kernel
 
-def pad_convolve_fft(data,kernel,row_pad,col_pad,**kwargs):
+def pad_convolve_fft(data,kernel,row_pad,col_pad):
     """
     frame/kernel convolution with reflective padding at frame edges
     Parameters
@@ -179,18 +179,19 @@ def pad_convolve_fft(data,kernel,row_pad,col_pad,**kwargs):
     kernel : numpy array, 2D float
         straylight kernel to be convolved with frame
     row_pad : int
-        integer ceiling of max row difference away from center (0)
+        spatial pixel padding to frame edges
     col_pad : int
-        integer ceiling of max column difference away from center (0)
+        spectral pixel padding to frame edges
     Returns
     result : numpy array, 2D float (shape: nrow x ncol) 
         convolved frame with reflective padding
     """
     new_data = np.pad(data,((row_pad,row_pad),(col_pad,col_pad)),mode='reflect')
-    result = convolve_fft(new_data,kernel,**kwargs)[row_pad:-row_pad,col_pad:-col_pad]
+    result = convolve_fft(new_data, kernel, normalize_kernel=False, 
+                          psf_pad=False, nan_treatment="interpolate")[row_pad:-row_pad,col_pad:-col_pad]
     return result
 
-def F_conv_ghost_msat(raw_frame, ghost_kernel, rowExtent, colExtent, ghost_peak_row_sum, ghost_peak_col_dif): 
+def F_conv_ghost_msat(raw_frame, ghost_kernel, row_pad, col_pad, ghost_peak_row_sum, ghost_peak_col_dif): 
     """
     Convolve frame with effective ghost kernel row mirrored and column shifted; reflective padding
     Parameters
@@ -198,10 +199,10 @@ def F_conv_ghost_msat(raw_frame, ghost_kernel, rowExtent, colExtent, ghost_peak_
         exposure frame previously deconvolved with peak straylight kernel
     ghost_kernel : numpy array, 2D float
         ghost kernel
-    rowExtent : int
-        max row difference away from center (0) for ghost kernel
-    colExtent : int
-        max column difference away from center (0) for ghost kernel
+    row_pad : int
+        spatial pixel padding to frame edges
+    col_pad : int
+        spectral pixel padding to frame edges
     ghost_peak_row_sum : int
         sum of ghost and peak row centers (constant for each sensor)
     ghost_peak_col_dif : int
@@ -225,8 +226,7 @@ def F_conv_ghost_msat(raw_frame, ghost_kernel, rowExtent, colExtent, ghost_peak_
         effective_ghost_kernel[-ghost_kernel.shape[0]:,-ghost_kernel.shape[1]:] = ghost_kernel[::-1,]
     elif nrows-ghost_peak_row_sum < 0 and ghost_peak_col_dif >= 0:
         effective_ghost_kernel[0:ghost_kernel.shape[0],-ghost_kernel.shape[1]:] = ghost_kernel[::-1,]
-    conv_ghost_frame = pad_convolve_fft(raw_frame,effective_ghost_kernel,row_pad=np.ceil(rowExtent).astype(int),
-                                        col_pad=np.ceil(colExtent).astype(int), normalize_kernel=False)[::-1,]
+    conv_ghost_frame = pad_convolve_fft(raw_frame,effective_ghost_kernel,row_pad,col_pad)[::-1,]
     return conv_ghost_frame
 
 class Straylight_Kernel():
@@ -787,7 +787,8 @@ class ISSF_Exposure(dict):
             self.logger.info('{} iteration done'.format(i_iter))
         self['data'] = new_data
 
-    def remove_straylight_msat(self,K_far,ghost_kernel,rowExtents,colExtents,ghost_peak_row_sum, ghost_peak_col_dif, sum_K_far=None,n_iter=3):
+    def remove_straylight_msat(self,K_far,ghost_kernel,row_pad,col_pad,
+                               ghost_peak_row_sum, ghost_peak_col_dif, sum_K_far=None,n_iter=3):
     	"""
     	Perform straylight correction deconvolution using peak and ghost kernels
     	Parameters
@@ -795,10 +796,10 @@ class ISSF_Exposure(dict):
         	far-field peak straylight kernel
     	ghost_kernel : numpy array, 2D float 
         	ghost straylight kernel
-    	rowExtents : list of int
-        	max row difference away from center (0) for peak and ghost kernels
-    	colExtents : list of int
-        	max column difference away from center (0) for peak and ghost kernels
+    	row_pad : int
+            spatial pixel padding to frame edges
+        col_pad : int
+            spectral pixel padding to frame edges
     	ghost_peak_row_sum : int
         	sum of ghost and peak row centers (constant for each sensor)
     	ghost_peak_col_dif : int
@@ -815,12 +816,10 @@ class ISSF_Exposure(dict):
         	sum_K_far = np.nansum(K_far)
     	new_data = self['data'].copy()
     	for i_iter in range(n_iter):
-        	new_data = (self['data']-pad_convolve_fft(new_data, K_far, 
-                                                  	row_pad = np.ceil(rowExtents[0]).astype(int),
-                                                  	col_pad = np.ceil(colExtents[0]).astype(int),
-                                                  	normalize_kernel=False))/(1-sum_K_far)
+        	new_data = (self['data']-pad_convolve_fft(new_data, K_far, row_pad, col_pad))/(1-sum_K_far)
         	self.logger.info('{} iteration done'.format(i_iter))
-    	new_data = new_data-F_conv_ghost_msat(new_data,ghost_kernel,rowExtents[1],colExtents[1],ghost_peak_row_sum,ghost_peak_col_dif) 
+    	new_data = new_data-F_conv_ghost_msat(new_data,ghost_kernel,row_pad,col_pad,
+                                           ghost_peak_row_sum,ghost_peak_col_dif) 
     	self['data'] = new_data
 
 class Central_Wavelength(list):
