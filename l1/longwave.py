@@ -873,7 +873,7 @@ class Shortwave(object):
                                 jac[i,] = nc[k][i,mask,0,0].filled(np.nan)
                         # make profile jacobians go from sfc to toa
                         jac = jac[::-1,]
-                        if wrt in ['mixing ratio']:
+                        if wrt in ['mixing ratio'] and kn not in ['T_layer']:
                             self.logger.info(f'converting c*dI/dc to dI/dc using {kn} mixing ratios in self.profiles')
                             jac /= self.profiles[kn][:,np.newaxis]
                         jacs[kn] = jac
