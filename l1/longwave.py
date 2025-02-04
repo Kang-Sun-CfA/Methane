@@ -738,7 +738,7 @@ class Longwave(object):
 
 class Shortwave(object):
     '''class representing a band in the shortwave. Wrapping SPLAT'''
-    def __init__(self,start_w,end_w,gas_names,sza=30.,vza=0.,
+    def __init__(self,start_w,end_w,gas_names,sza=30.,vza=0.,obs_alt=800.,
                  dw=0.1,nsample=3,hw1e=None,
                  dt=0.1,dp=18e-4,f_number=2,system_efficiency=0.5,readout_e=60,
                  splat_path='/home/kangsun/N2O/sci-level2-splat/build/splat.exe',
@@ -761,6 +761,7 @@ class Shortwave(object):
         self.end_w = end_w
         self.sza = sza
         self.vza = vza
+        self.obs_alt = obs_alt
         hw1e = hw1e or dw*nsample/1.665109
         self.dw = dw
         self.hw1e = hw1e
@@ -907,6 +908,7 @@ class Shortwave(object):
         varlst['output_file'] = output_path
         varlst['sza'] = self.sza
         varlst['vza'] = self.vza
+        varlst['obs_alt'] = self.obs_alt
         varlst['vaa'] = kwargs.pop('vaa',10)
         varlst['saa'] = kwargs.pop('saa',0)
         varlst['aza'] = kwargs.pop('aza',10)
