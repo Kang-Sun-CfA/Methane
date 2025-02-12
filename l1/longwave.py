@@ -739,12 +739,14 @@ class Longwave(object):
 class Shortwave(object):
     '''class representing a band in the shortwave. Wrapping SPLAT'''
     def __init__(self,start_w,end_w,gas_names,sza=30.,vza=0.,obs_alt=800.,
+                 Ts=None,TC=0.,emissivity=1.,
                  dw=0.1,nsample=3,hw1e=None,
                  dt=0.1,dp=18e-4,f_number=2,system_efficiency=0.5,readout_e=60,
                  splat_path='/home/kangsun/N2O/sci-level2-splat/build/splat.exe',
                  control_template_path='/home/kangsun/N2O/n2o_run/control/forward_template.control',
                  working_dir='/home/kangsun/N2O/n2o_run',
                  profile_path='/home/kangsun/N2O/n2o_run/data/additional_inputs/test_profile.nc',
+                 absco_path_pattern='HITRAN2020_*_7um_0p00_0p005dw.nc',
                  radiance_unit='1e14 photons/s/cm2/sr/nm'):
         '''
         splat_path:
@@ -777,6 +779,7 @@ class Shortwave(object):
         self.working_dir = working_dir
         self.profile_path = profile_path
         self.control_template_path = control_template_path
+        self.absco_path_pattern = absco_path_pattern
         profiles = {}
         self.logger.info(f'loading {profile_path}')
         # the profiles go from surface to toa, opposite from splat profiles
@@ -817,6 +820,8 @@ class Shortwave(object):
             B = self.profiles['H2O'][ilayer]
             # air density in molec/cm3
             self.profiles['air_density'][ilayer] = F_get_dry_air_density(P,T,B)
+        self.Ts = Ts or self.profiles['T_level'][np.argmin(self.profiles['z_level'])]+TC
+        self.emissivity = emissivity
     
     def plot_jacobian(self,key,ax=None,vertical_coordinate='P_layer',
                       **kwargs):
@@ -914,6 +919,11 @@ class Shortwave(object):
         varlst['aza'] = kwargs.pop('aza',10)
         varlst['start_w1'] = kwargs.pop('start_w1',self.start_w-1)
         varlst['end_w1'] = kwargs.pop('end_w1',self.end_w+1)
+        varlst['Ts'] = self.Ts
+        varlst['emissivity'] = self.emissivity
+        for gas in self.gas_names:
+            absco_fn = self.absco_path_pattern.replace('*',gas)
+            varlst['{}_absco'.format(gas.upper())] = absco_fn
         self.dw1 = kwargs.pop('dw1',0.01)
         varlst['dw1'] = self.dw1
         
