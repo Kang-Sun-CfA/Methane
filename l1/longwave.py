@@ -1013,6 +1013,8 @@ class Parameters(OrderedDict):
                     np.sqrt(h@par.posterior_error_matrix@h))
             setattr(par,'column_measurement_error',
                     np.sqrt(h@par.measurement_error_matrix@h))
+            setattr(par,'column_smoothing_error',
+                    np.sqrt(h@par.smoothing_error_matrix@h))
             setattr(par,'column_prior_error',
                     np.sqrt(h@par.prior_error_matrix@h))
             setattr(par,'column_AVK',
@@ -1176,14 +1178,17 @@ class LSA(object):
         G = Sa@K.T@np.linalg.inv(K@Sa@K.T+Sy)
         A = G@K
         Shat = np.linalg.inv(K.T@np.linalg.inv(Sy)@K+np.linalg.inv(Sa))
+        Ss = (A-np.identity(np.sum(nstates)))@Sa@(A-np.identity(np.sum(nstates))).T
         self.Sa = Sa
         self.G = G
         self.A = A
         self.K = K
         self.Shat = Shat
         self.Sm = G@Sy@G.T
+        self.Ss = Ss
         params.update_matrices(matrix_name='posterior_error_matrix',matrix=Shat)
         params.update_matrices(matrix_name='measurement_error_matrix',matrix=self.Sm)
+        params.update_matrices(matrix_name='smoothing_error_matrix',matrix=self.Ss)
         params.update_vectors(vector_name='posterior_error',vector=np.sqrt(np.diag(Shat)))
         params.update_matrices(matrix_name='averaging_kernel',matrix=A)
         params.update_vectors(vector_name='dofs_vector',vector=np.diag(A))
