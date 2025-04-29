@@ -1715,28 +1715,7 @@ class Multiple_ISRFs():
                 pp = np.polyfit(xdata,ydata,1)
                 yhat = np.polyval(pp,center_pix_median2)
                 center_pix_smooth[:,iw] = yhat
-
-        # AIC/BIC check for fitting order at example row
-        #n_wavcal_poly_tests = [1,2,3,4,5,6,7]
-        #aic = np.full(len(n_wavcal_polys),np.nan,dtype=float)
-        #bic = np.full(len(n_wavcal_polys),np.nan,dtype=float)
-        #for i,n in enumerate(n_wavcal_polys):
-        #    xdata = center_pix_smooth[399,:]
-        #    ydata = self.central_wavelengths
-        #    wavcal_check = np.polyfit(xdata,ydata,n)
-        #    y_predicted = np.polyval(wavcal_check, xdata)
-        #    residuals = ydata - y_predicted
-        #    sse = np.sum(residuals**2)
-        #    rss = np.sum((ydata - y_predicted)**2) 
-        #    mse = rss / (len(ydata) - (n+1)) 
-        #    aic[i] = 2 * (n+1) + len(ydata) * np.log(sse / len(ydata))
-        #    bic[i] = len(ydata) * np.log(mse) + (n+1) * np.log(len(ydata))
-        #print(aic)
-        #print(min(aic))
-        #print(bic)
-        #print(min(bic))
-        #n_wavcal_poly= n_wavcal_polys[np.argmin(aic)]    
-    
+		    
         wavcal_poly = np.full((self.shape[0],n_wavcal_poly+1),np.nan,dtype=float)
         for irow in range(self.shape[0]):
             print(irow)
