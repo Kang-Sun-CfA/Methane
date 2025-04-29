@@ -788,6 +788,7 @@ class ISSF_Exposure(dict):
         self['data'] = new_data
 
     def remove_straylight_msat(self,K_far,ghost_kernel,row_pad,col_pad,
+                               across_frame_science_window, spectral_frame_science_window,
                                ghost_peak_row_sum, ghost_peak_col_dif, sum_K_far=None,n_iter=3):
     	"""
     	Perform straylight correction deconvolution using peak and ghost kernels
@@ -800,6 +801,10 @@ class ISSF_Exposure(dict):
             spatial pixel padding to frame edges
         col_pad : int
             spectral pixel padding to frame edges
+        across_frame_science_window: list
+            [minimum, maximum] across track pixel positions over which to apply straylight correction
+        spectral_frame_science_window: list
+            [minimum, maximum] spectral pixel positions over which to apply straylight correction
     	ghost_peak_row_sum : int
         	sum of ghost and peak row centers (constant for each sensor)
     	ghost_peak_col_dif : int
@@ -814,13 +819,34 @@ class ISSF_Exposure(dict):
         	return
     	if sum_K_far is None:
         	sum_K_far = np.nansum(K_far)
-    	new_data = self['data'].copy()
+    	new_data = self['data'].copy() 
+    	# Limit stray-light correction to science window used area pixels
+    	masked_data = np.ma.array(new_data,mask=np.full((new_data.shape[0], new_data.shape[1]), False))
+
+        # Assumes preprocessed frame already has bad pixels NaN, if not mask bad pixels here
+        # Used area for straylight correction
+    	used_area_radiance = masked_data[
+            across_frame_science_window[0] : across_frame_science_window[1],
+            spectral_frame_science_window[0] : spectral_frame_science_window[1],
+        ]
+        
     	for i_iter in range(n_iter):
-        	new_data = (self['data']-pad_convolve_fft(new_data, K_far, row_pad, col_pad))/(1-sum_K_far)
+        	used_area_radiance = (used_area_radiance-pad_convolve_fft(
+                used_area_radiance, K_far, row_pad, col_pad))/(1-sum_K_far)
         	self.logger.info('{} iteration done'.format(i_iter))
-    	new_data = new_data-F_conv_ghost_msat(new_data,ghost_kernel,row_pad,col_pad,
-                                           ghost_peak_row_sum,ghost_peak_col_dif) 
-    	self['data'] = new_data
+    	used_area_radiance = used_area_radiance-F_conv_ghost_msat(
+            used_area_radiance,ghost_kernel,row_pad,col_pad,ghost_peak_row_sum,ghost_peak_col_dif) 
+        
+    	# Replace used area radiance values with straylight corrected values and restore
+    	# bad pixel values to original, retaining all pixel values outside used area
+    	masked_data[
+            across_frame_science_window[0] : across_frame_science_window[1],
+            spectral_frame_science_window[0] : spectral_frame_science_window[1],
+        ] = used_area_radiance
+        
+    	self['data'] = masked_data
+        
+        
 
 class Central_Wavelength(list):
     '''
@@ -850,8 +876,32 @@ class Central_Wavelength(list):
         self.nrow = nrow
         self.ncol = ncol
     
-    def read_jf_nc(self,nc_fn,micro_window=None,micro_step=1,window_size=None):
+    def read_jf_nc(self,nc_fn,bad_pixel_map_path,K_far,ghost_kernel,across_pad,spectral_pad,
+                   across_frame_science_window, spectral_frame_science_window,
+                   ghost_peak_row_sum, ghost_peak_col_dif, 
+                   micro_window=None,micro_step=1,window_size=None,remove_straylight=True):
+        
         '''read nc files from Jonathan Franklin
+        nc_fn: string
+            netcdf data file path
+        bad_pixel_map_path: string
+            netcdf bad pixel map file path
+        K_far : numpy array, 2D float 
+        	far-field peak straylight kernel
+    	ghost_kernel : numpy array, 2D float 
+        	ghost straylight kernel
+    	across_pad : int
+            spatial pixel padding to frame edges
+        spectral_pad : int
+            spectral pixel padding to frame edges
+        across_frame_science_window: list
+            [minimum, maximum] across track pixel positions over which to apply straylight correction
+        spectral_frame_science_window: list
+            [minimum, maximum] spectral pixel positions over which to apply straylight correction
+    	ghost_peak_row_sum : int
+        	sum of ghost and peak row centers (constant for each sensor)
+    	ghost_peak_col_dif : int
+        	ghost kernel center column minus peak kernel center column (constant for each sensor)
         micro_window:
             window size in nm to subset the wavelength micro steps
         micro_step:
@@ -859,6 +909,7 @@ class Central_Wavelength(list):
         window_size:
             if not None, call ISSF_Exposure.running_average_rows(window_size) to running average rows
         '''
+        
         self.logger.info('loading {}'.format(nc_fn))
         nc = Dataset(nc_fn,'r')
         w = nc['Wavelength'][:]
@@ -874,9 +925,21 @@ class Central_Wavelength(list):
         if np.sum(wmask) < len(w):
             self.logger.warning('{} wavelengths will be reduced to {}'.format(len(w),np.sum(wmask)))
         for idx in np.arange(len(w))[wmask]:
-            expo = ISSF_Exposure(wavelength=w[idx],data=nc['Data'][...,idx],
+            expo = ISSF_Exposure(wavelength=w[idx],data=nc['Data'][idx,...],
                                  nrow=2048,ncol=2048,
                                  int_time=None)
+            # Apply bad pixel mask
+            with Dataset(bad_pixel_map_path, "r") as bad_pixel_map_ds:
+                badPixelMap = bad_pixel_map_ds.variables["BadPixelMap"][:].astype(np.uint16)
+            masked_data = np.ma.array(expo['data'], 
+                                      mask=np.full((expo['data'].shape[0], 
+                                                    expo['data'].shape[1]), False))
+            masked_data = np.ma.masked_where(badPixelMap != 0, masked_data)
+            masked_data.filled(np.nan)
+            expo['data']=masked_data
+            # Stray-light correction
+            if remove_straylight==True:
+                expo.remove_straylight_msat(K_far,ghost_kernel,across_pad,spectral_pad,across_frame_science_window, spectral_frame_science_window,ghost_peak_row_sum, ghost_peak_col_dif, sum_K_far=None,n_iter=2)
             expo.flip_columns()
             if window_size is not None:
                 expo.running_average_rows(window_size)
@@ -1090,7 +1153,7 @@ class Single_ISRF(OrderedDict):
     def __init__(self):
         self.logger = logging.getLogger(__name__)
     
-    def merge(self,isrf,min_scale=8000,weighting_exponent=4):
+    def merge(self,isrf, min_scale=8000, weighting_exponent=4, mean_difference=1e4, is_flight_system=True):
         '''
         merge with another isrf at the same row/wavelength. 
         needed for methanesat where multiple fields fill the the slit
@@ -1100,6 +1163,8 @@ class Single_ISRF(OrderedDict):
             if one isrf has scale lower than it, the other will be used without weighting
 	weighting_exponent:
 	    exponent by which to weight overlapping ISRFs
+        is_flight_system: boolean
+            specify dataset, flight system level has different merging method to account for artifacts
         '''
         if 'row' not in self.keys():
             return isrf
@@ -1115,16 +1180,30 @@ class Single_ISRF(OrderedDict):
         new_isrf = Single_ISRF()
         new_isrf['row'] = self['row']
         new_isrf['dw_grid'] = self['dw_grid']
-        w1 = np.nanmean(self['scales_final'])**weighting_exponent
-        w2 = np.nanmean(isrf['scales_final'])**weighting_exponent
-        if w1 < min_scale and w2 >= min_scale:
-            self.logger.debug('second isrf receives full weight')
-            w1 = 0.;w2 = 1.
-        elif w1 >= min_scale and w2 < min_scale:
-            self.logger.debug('first isrf receives full weight')
-            w1 = 1.;w2 = 0.
-        elif w1 < min_scale and w2 < min_scale:
-            self.logger.warning('both isrfs are lower than min_scale of {}!!!'.format(min_scale))
+
+        # Compute merging weights
+        if is_flight_system==True:
+            mean_scale_1 = np.nanmean(self['scales_final'])
+            mean_scale_2 = np.nanmean(isrf['scales_final'])
+            mean_scale_diff = np.abs(mean_scale_2 - mean_scale_1) 
+            rel_difference = mean_scale_diff/np.abs(mean_difference)
+            if (mean_scale_diff)<=0:
+                w1=0
+                w2=1
+            else:
+                w1 = rel_difference**weighting_exponent
+                w2 = 1/(rel_difference**weighting_exponent) 
+        else:
+            w1 = np.nanmean(self['scales_final'])**weighting_exponent
+            w2 = np.nanmean(isrf['scales_final'])**weighting_exponent
+            if w1 < min_scale and w2 >= min_scale:
+                self.logger.debug('second isrf receives full weight')
+                w1 = 0.;w2 = 1.
+            elif w1 >= min_scale and w2 < min_scale:
+                self.logger.debug('first isrf receives full weight')
+                w1 = 1.;w2 = 0.
+            if w1 < min_scale and w2 < min_scale:
+                self.logger.warning('both isrfs are lower than min_scale of {}!!!'.format(min_scale))
             
         for f in ['ISRF','center_pix_final','scales_final','pp_final','pp_inv_final','centers_of_mass_final']:
             new_isrf[f] = (w1*self[f]+w2*isrf[f])/(w1+w2)
@@ -1561,10 +1640,7 @@ class Multiple_ISRFs():
             self.logger.info('peak widths are from raw isrf profiles')
             return np.array([isrf.peak_width(percent=percent) for row in self.data for isrf in row]).reshape(self.shape)
     
-    def register_wavelength_msat(self,use_central_wavelengths=None,n_wavcal_poly=None):
-        ''' 
-        wavcal for msat
-        '''
+    def register_wavelength_old(self,use_central_wavelengths=None,n_wavcal_poly=None):
         center_pix = np.full(self.shape,np.nan)
         center_pix_smooth = np.full(self.shape,np.nan)
         for iw in range(self.data.shape[1]):
@@ -1595,22 +1671,16 @@ class Multiple_ISRFs():
         self.center_pix = center_pix
         self.wavcal_poly = wavcal_poly
         self.n_wavcal_poly = n_wavcal_poly
-    def register_wavelength(self,use_central_wavelengths=None,n_wavcal_poly=None):
+    def register_wavelength(self,use_central_wavelengths=None,n_wavcal_poly=1):
         '''
         wavelength calibration
-        '''
-        if n_wavcal_poly is None:
-            if self.instrum.lower() == 'methanesat':
-                n_wavcal_poly =3
-            elif self.instrum.lower() == 'methaneair':
-                n_wavcal_poly =1
-                
+        center spectral pixel smoothing for MethaneAIR only
+        '''                
         if use_central_wavelengths is None:
             use_central_wavelengths = self.central_wavelengths
-        if self.instrum.lower() == 'methanesat':
-            self.register_wavelength_msat(use_central_wavelengths,n_wavcal_poly)
-            return
+
         data = self.data[:,np.searchsorted(self.central_wavelengths,use_central_wavelengths)]
+        print('Running wavcal')
         center_pix = np.full(data.shape,np.nan)
         center_pix_median = np.full(data.shape,np.nan)
         for iw in range(data.shape[1]):
@@ -1625,35 +1695,44 @@ class Multiple_ISRFs():
                     center_pix[irow,iw] = data[irow,iw]['center_pix_{}'.format(data[irow,iw]['niter'])]
                     center_pix_median[irow,iw] = data[irow,iw]['center_pix_{}'.format(data[irow,iw]['niter'])]
             center_pix_median[:,iw] = center_pix[:,iw]-np.nanmedian(center_pix[:,iw]) 
-        center_pix_median2 = np.nanmedian(center_pix_median,axis=1)
-        center_pix_smooth = np.full(data.shape,np.nan)       
-        for iw in range(data.shape[1]):
-            ydata = center_pix[:,iw].copy()
-            xdata = center_pix_median2.copy()
-            mask = (~np.isnan(xdata)) & (~np.isnan(ydata))
-            xdata = xdata[mask];ydata = ydata[mask]
-            pp = np.polyfit(xdata,ydata,1)
-            yfit = np.polyval(pp,xdata)
-            residual = ydata-yfit
-            rmse = np.sqrt(np.nansum(np.power(residual,2))/(len(xdata)-2))
-            mask = np.abs(residual) <= 2.5*rmse
-            xdata = xdata[mask];ydata = ydata[mask]
-            pp = np.polyfit(xdata,ydata,1)
-            yhat = np.polyval(pp,center_pix_median2)
-            center_pix_smooth[:,iw] = yhat
+
+        if self.instrum.lower() == 'methanesat':
+            center_pix_smooth = center_pix 
+        elif self.instrum.lower() == 'methaneair':
+            center_pix_median2 = np.nanmedian(center_pix_median,axis=1)
+            center_pix_smooth = np.full(data.shape,np.nan)       
+            for iw in range(data.shape[1]):
+                ydata = center_pix[:,iw].copy()
+                xdata = center_pix_median2.copy()
+                mask = (~np.isnan(xdata)) & (~np.isnan(ydata))
+                xdata = xdata[mask];ydata = ydata[mask]
+                pp = np.polyfit(xdata,ydata,1)
+                yfit = np.polyval(pp,xdata)
+                residual = ydata-yfit
+                rmse = np.sqrt(np.nansum(np.power(residual,2))/(len(xdata)-2))
+                mask = np.abs(residual) <= 2.5*rmse
+                xdata = xdata[mask];ydata = ydata[mask]
+                pp = np.polyfit(xdata,ydata,1)
+                yhat = np.polyval(pp,center_pix_median2)
+                center_pix_smooth[:,iw] = yhat
+		    
         wavcal_poly = np.full((self.shape[0],n_wavcal_poly+1),np.nan,dtype=float)
         for irow in range(self.shape[0]):
+            print(irow)
             if self.row_mask[irow]:
                 continue
             xdata = center_pix_smooth[irow,:]
-            if np.sum(np.isnan(xdata)) > 2:
+            if (np.sum(np.isnan(xdata)) > 0) or (np.any(np.isinf(xdata))):
                 self.logger.info('Footprint %d appears to be empty'%irow)
                 continue
             ydata = self.central_wavelengths
+            print(xdata)
+            print(ydata)
             wavcal_poly[irow,:] = np.flip(np.polyfit(xdata,ydata,n_wavcal_poly)) 
         self.center_pix_smooth = center_pix_smooth
-        self.center_pix_median = center_pix_median
-        self.center_pix_median2 = center_pix_median2
+        if self.instrum.lower() == 'methaneair':
+            self.center_pix_median = center_pix_median
+            self.center_pix_median2 = center_pix_median2
         self.wavcal_poly = wavcal_poly
         self.n_wavcal_poly = n_wavcal_poly
     
@@ -1762,7 +1841,7 @@ class Multiple_ISRFs():
             ax[iw].set_xlim([-0.5,0.5])
         return figout
 
-    def restretch_ISRF(self):
+    def restretch_ISRF(self, spectral_center_mask):
         ''' 
         update the horizontal axis of ISRF using full-column wavcal
         '''
@@ -1786,6 +1865,13 @@ class Multiple_ISRFs():
                 dw_grid = self.data[irow,iw]['dw_grid']
                 isrfy = interp_func(dw_grid)
                 isrfy[np.isnan(isrfy) | (isrfy < 0)] = 0
+ 		# Zero ISRF values in spectral straylight wings
+                wvls = self.dw_grid + central_wavelength
+                w1 = np.polynomial.polynomial.polyval(self.center_pix_smooth[irow,iw]-spectral_center_mask, self.wavcal_poly[irow,:])
+                w2 = np.polynomial.polynomial.polyval(self.center_pix_smooth[irow,iw]+spectral_center_mask, self.wavcal_poly[irow,:])
+                idx = (wvls<=w1) | (wvls>=w2)
+                isrfy[idx] = 0
+                # Normalize by integrated area
                 self.data[irow,iw]['ISRF_restretched'] = isrfy/np.trapz(isrfy,dw_grid)
     
     def apply_median_filter(self,median_filter_size=(5,3,1),outlier_threshold=3):
@@ -1801,7 +1887,7 @@ class Multiple_ISRFs():
         outlier_criterion = rms-median_rms[:,np.newaxis]
         outlier_mask = np.abs(outlier_criterion)>outlier_threshold*np.nanstd(outlier_criterion)
         self.logger.info('{} outlier ISRFs will be replaced by median filtered values'.format(np.sum(outlier_mask)))
-        isrf_data[outlier_mask,] = isrf_data_smooth[outlier_mask,]
+        #isrf_data[outlier_mask,] = isrf_data_smooth[outlier_mask,]
         self.isrf_data = isrf_data
         self.outlier_criterion = outlier_criterion
     
@@ -1919,7 +2005,7 @@ class Multiple_ISRFs():
                     continue
                 available_rows = self.rows_1based[~filled_mask[:,icol]]
                 rows_to_average_0based = (available_rows[np.argsort(np.abs(available_rows-self.rows_1based[irow]))[0:nrows_to_average]]-1).astype(int)
-                self.isrf_data[irow,icol,:] = np.mean(self.isrf_data[rows_to_average_0based,icol,:],axis=0)
+                self.isrf_data[irow,icol,:] = np.nanmean(self.isrf_data[rows_to_average_0based,icol,:],axis=0)
                 self.isrf_data[irow,icol,:] = self.isrf_data[irow,icol,:]/np.trapz(self.isrf_data[irow,icol,:],self.dw_grid)
         
         ismissing_wavcal = np.isnan(self.wavcal_poly[:,0])
@@ -1928,11 +2014,11 @@ class Multiple_ISRFs():
                 continue
             available_rows = self.rows_1based[~ismissing_wavcal]
             rows_to_average_0based = (available_rows[np.argsort(np.abs(available_rows-self.rows_1based[irow]))[0:nrows_to_average]]-1).astype(int)
-            self.wavcal_poly[irow,:] = np.mean(self.wavcal_poly[rows_to_average_0based,:],axis=0)
+            self.wavcal_poly[irow,:] = np.nanmean(self.wavcal_poly[rows_to_average_0based,:],axis=0)
         
         
         
-    def read_nc(self,fn):
+    def read_nc(self,fn,save_spectralind=True):
         '''
         read a nc file and populate the object
         '''
@@ -1940,6 +2026,8 @@ class Multiple_ISRFs():
         self.dw_grid = nc['delta_wavelength'][:].filled(np.nan)
         self.central_wavelengths = nc['central_wavelength'][:].filled(np.nan)
         self.isrf_data = nc['isrf'][:].filled(np.nan)
+        if save_spectralind==True:
+            self.center_pix_smooth = nc['center_pix_smooth'][:].filled(np.nan)
         self.rows_1based = np.arange(1,self.isrf_data.shape[0]+1)
         self.shape = (self.isrf_data.shape[0],self.isrf_data.shape[1])
         self.wavcal_poly = nc['pix2nm_polynomial'][:].filled(np.nan)
@@ -1949,9 +2037,11 @@ class Multiple_ISRFs():
         if 'filled_mask' in nc.variables.keys():
             self.filled_mask = nc['filled_mask'][:]
         nc.close()
+        
         return self
         
-    def save_nc(self,fn,dataset,saving_time=None):
+    def save_nc(self,fn,saving_time=None, dataset='flight_system_level', 
+                save_wavcal_only=False, save_spectralind=True):
         '''
         save data to netcdf
 	dataset: str, description of calibration dataset used to create ISRF lookup table (e.g. flight system level TVAC)
@@ -1961,7 +2051,11 @@ class Multiple_ISRFs():
         if saving_time is None:
             saving_time = dt.datetime.now()
         nc = Dataset(fn,'w')
-        ncattr_dict = {'description':'MethaneAIR/MethaneSAT ISRF data (https://doi.org/10.5194/amt-14-3737-2021)',
+        if save_wavcal_only==True:
+            description = 'MethaneAIR/MethaneSAT wavelength calibration coefficients'
+        else:
+            description = 'MethaneAIR/MethaneSAT ISRF data (https://doi.org/10.5194/amt-14-3737-2021)'
+        ncattr_dict = {'description': description,
                        'institutions': 'Harvard University; University at Buffalo',
                        'contacts': 'David Miller, djmiller@g.harvard.edu; Kang Sun, kangsun@buffalo.edu',
                        'history':'Created '+saving_time.strftime('%Y-%m-%dT%H:%M:%SZ'),
@@ -1969,35 +2063,45 @@ class Multiple_ISRFs():
                        'band':self.which_band,
 		       'dataset': dataset}
         nc.setncatts(ncattr_dict)
-        nc.createDimension('delta_wavelength',len(self.dw_grid))
-        nc.createDimension('central_wavelength',self.shape[1])
+        
         nc.createDimension('ground_pixel',self.shape[0])
         nc.createDimension('polynomial',self.n_wavcal_poly+1)
+        var_wavcal = nc.createVariable('pix2nm_polynomial',float,('ground_pixel','polynomial'))
+        var_wavcal.long_name = 'wavelength calibration coefficients, starting from intercept'
+        var_wavcal[:] = self.wavcal_poly
         
-        var_isrf_dw = nc.createVariable('delta_wavelength',float,('delta_wavelength',))
-        var_isrf_dw.units = 'nm'
-        var_isrf_dw.long_name = 'wavelength grid of ISRF'
-        var_isrf_dw[:] = self.dw_grid
+        if save_wavcal_only==False:
+            nc.createDimension('delta_wavelength',len(self.dw_grid))
+            nc.createDimension('central_wavelength',self.shape[1])
+            
+            var_isrf_dw = nc.createVariable('delta_wavelength',float,('delta_wavelength',))
+            var_isrf_dw.units = 'nm'
+            var_isrf_dw.long_name = 'wavelength grid of ISRF'
+            var_isrf_dw[:] = self.dw_grid
+            
+            var_isrf_w = nc.createVariable('central_wavelength',float,('central_wavelength',))
+            var_isrf_w.units = 'nm'
+            var_isrf_w.long_name = 'wavelength grid where ISRF was measured'
+            var_isrf_w[:] = self.central_wavelengths
+            
+            var_isrf = nc.createVariable('isrf',np.float32,('ground_pixel','central_wavelength','delta_wavelength'))
+            var_isrf.units = 'nm^-1'
+            var_isrf.long_name = 'ISRF'
+            var_isrf[:] = self.isrf_data
         
-        var_isrf_w = nc.createVariable('central_wavelength',float,('central_wavelength',))
-        var_isrf_w.units = 'nm'
-        var_isrf_w.long_name = 'wavelength grid where ISRF was measured'
-        var_isrf_w[:] = self.central_wavelengths
+        if save_spectralind==True:
+            var_center_pix_smooth = nc.createVariable('center_pix_smooth',np.float,('ground_pixel','central_wavelength'))
+            var_center_pix_smooth.units = 'spectral pixel'
+            var_center_pix_smooth.long_name = 'Center spectral pixel smoothed'
+            var_center_pix_smooth[:] = self.center_pix_smooth
         
-        var_isrf = nc.createVariable('isrf',np.float32,('ground_pixel','central_wavelength','delta_wavelength'))
-        var_isrf.units = 'nm^-1'
-        var_isrf.long_name = 'ISRF'
-        var_isrf[:] = self.isrf_data
-        
-        if hasattr(self,'filled_mask'):
+        if hasattr(self,'filled_mask') and save_wavcal_only==False:
             var_mask = nc.createVariable('filled_mask',int,('ground_pixel','central_wavelength'))
             var_mask.units = 'T/F'
             var_mask.long_name = '1-filled,0-not filled'
             var_mask[:] = self.filled_mask
         
-        var_wavcal = nc.createVariable('pix2nm_polynomial',float,('ground_pixel','polynomial'))
-        var_wavcal.long_name = 'wavelength calibration coefficients, starting from intercept'
-        var_wavcal[:] = self.wavcal_poly
+        
         
         nc.close()
         
