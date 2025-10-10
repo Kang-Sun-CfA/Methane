@@ -163,7 +163,7 @@ def F_level2layer(profiles):
     return profiles
 
 def F_noise_model(radiance,dw,nsample,dt,dp,f_number,system_efficiency,readout_e,
-                  radiance_unit='photons/s/cm2/sr/nm'):
+                  dark_e_per_s=0,radiance_unit='photons/s/cm2/sr/nm'):
     rus = radiance_unit.split(' ')
     if len(rus) == 1:
         factor = 1.
@@ -173,8 +173,10 @@ def F_noise_model(radiance,dw,nsample,dt,dp,f_number,system_efficiency,readout_e
         unit = rus[1]
     # signal electrons
     S = np.pi/4*nsample*(factor*radiance)*dt*dw*(dp/f_number)**2*system_efficiency
+    # dark electrons
+    D = dark_e_per_s*dt
     # noise electrons
-    N = np.sqrt(S+readout_e**2)
+    N = np.sqrt(S+D+readout_e**2)
     SNR = S/N
     return SNR
 
@@ -277,6 +279,7 @@ class Longwave(object):
     def set_property(self,vza=0.,Ts=None,TC=0.,emissivity=1.,
                      dw=0.1,nsample=3,hw1e=None,
                      dt=0.1,dp=18e-4,f_number=2,system_efficiency=0.5,readout_e=60,
+                     dark_e_per_s=0,
                      profile_path='/home/kangsun/N2O/n2o_run/data/additional_inputs/test_profile.nc',
                      radiance_unit='1e14 photons/s/cm2/sr/nm'):
         '''update property without reloading absco tables, which is slow
@@ -305,6 +308,7 @@ class Longwave(object):
         self.f_number = f_number
         self.system_efficiency = system_efficiency
         self.readout_e = readout_e
+        self.dark_e_per_s = dark_e_per_s
         gas_names = self.gas_names
         profiles = {}
         self.logger.info(f'loading {profile_path}')
@@ -417,6 +421,7 @@ class Longwave(object):
         SNR = F_noise_model(jacs['Radiance'],self.dw,self.nsample,
                             self.dt,self.dp,self.f_number,
                             self.system_efficiency,self.readout_e,
+                            self.dark_e_per_s,
                             self.radiance_unit)
         jacs['SNR'] = SNR
         jacs['Radiance_error'] = jacs['Radiance']/SNR
@@ -742,6 +747,7 @@ class Shortwave(object):
                  Ts=None,TC=0.,emissivity=1.,
                  dw=0.1,nsample=3,hw1e=None,
                  dt=0.1,dp=18e-4,f_number=2,system_efficiency=0.5,readout_e=60,
+                 dark_e_per_s=0,
                  splat_path='/home/kangsun/N2O/sci-level2-splat/build/splat.exe',
                  control_template_path='/home/kangsun/N2O/n2o_run/control/forward_template.control',
                  working_dir='/home/kangsun/N2O/n2o_run',
@@ -773,6 +779,7 @@ class Shortwave(object):
         self.f_number = f_number
         self.system_efficiency = system_efficiency
         self.readout_e = readout_e
+        self.dark_e_per_s = dark_e_per_s
         self.radiance_unit = radiance_unit
         self.gas_names = gas_names
         self.splat_path = splat_path
@@ -889,6 +896,7 @@ class Shortwave(object):
                 SNR = F_noise_model(jacs['Radiance'],self.dw,self.nsample,
                                     self.dt,self.dp,self.f_number,
                                     self.system_efficiency,self.readout_e,
+                                    self.dark_e_per_s,
                                     self.radiance_unit)
                 jacs['SNR'] = SNR
                 jacs['Radiance_error'] = jacs['Radiance']/SNR
