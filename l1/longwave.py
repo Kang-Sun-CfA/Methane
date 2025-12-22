@@ -241,6 +241,7 @@ class Longwave(object):
     '''class representing a band in the longwave. Custom RTM based on EPS237'''
     def __init__(self,start_w,end_w,gas_names,
                  absco_path_pattern='/home/kangsun/N2O/n2o_run/data/splat_data/SAO_crosssections/splatv2_xsect/HITRAN2020_*_4500-4650nm_0p00_0p002dw.nc',
+                 use_wnum=False,dv1=0.01
                  ):
         '''
         start/end_w:
@@ -251,6 +252,8 @@ class Longwave(object):
         self.logger = logging.getLogger(__name__)
         self.start_w = start_w
         self.end_w = end_w
+        if use_wnum:
+            start_v,end_v = 1e7/end_w,1e7/start_w
         self.gas_names = gas_names
         
         abscos = {}
@@ -265,15 +268,46 @@ class Longwave(object):
                 w_mask = (absco_w>=start_w) & (absco_w<=end_w)
                 absco_w = absco_w[w_mask]
                 absco_sigma = nc['CrossSection'][:,:,:,w_mask].filled(np.nan)
-            abscos[gas] = dict(absco_T=absco_T,absco_P=absco_P,absco_B=absco_B,\
-                               absco_w=absco_w,absco_sigma=absco_sigma)
             if igas == 0:
-                self.w1 = absco_w
-                self.dw1 = np.abs(np.mean(np.diff(self.w1)))
+                if use_wnum:
+                    v1 = arange_(start_v,end_v,dv1)[::-1]
+                    self.v1 = v1
+                    self.dv1 = np.abs(np.mean(np.diff(self.v1)))
+                    self.w1 = 1e7/v1
+                    # convolve high res w grid by a kernel 2.1 times wider than the v grid size
+                    fwhm = np.abs(np.mean(np.diff(1e7/v1)))*2.1
+                    hw1e = fwhm/1.665
+                    dabsco_w = np.abs(np.mean(np.diff(absco_w)))
+                    ndx = np.ceil(hw1e*5/dabsco_w);
+                    xx = np.arange(ndx*2)*dabsco_w-ndx*dabsco_w;
+                    kernel = 1/np.sqrt(np.pi)/hw1e*np.exp(-np.power(xx/hw1e,2))*dabsco_w
+                    kernel /= kernel.sum()
+                else:
+                    self.w1 = absco_w
+                    self.dw1 = np.abs(np.mean(np.diff(self.w1)))
             else:
                 if not np.array_equal(self.w1, absco_w):
                     self.logger.warning(f'wavelength grid of {gas} differs from {gas_names[0]}')
-        self.logger.info('absco at {:.3f}-{:.3f} nm, sampling at {:.3f} nm'.format(absco_w.min(),absco_w.max(),self.dw1))
+            
+            if not use_wnum:
+                abscos[gas] = dict(absco_T=absco_T,absco_P=absco_P,absco_B=absco_B,\
+                                   absco_w=absco_w,absco_sigma=absco_sigma)
+            else:
+                sigma_shape = absco_sigma.shape
+                absco_sigma_v = np.zeros(sigma_shape[:-1]+(len(v1),))
+                for iP in range(sigma_shape[0]):
+                    for iT in range(sigma_shape[1]):
+                        for iB in range(sigma_shape[2]):
+                            ss = convolve_fft(absco_sigma[iP,iT,iB,:],kernel,normalize_kernel=False)
+                            absco_sigma_v[iP,iT,iB,:] = np.interp(1e7/v1,absco_w,ss)
+                abscos[gas] = dict(absco_T=absco_T,absco_P=absco_P,absco_B=absco_B,\
+                                   absco_w=1e7/v1,absco_v=v1,absco_sigma=absco_sigma_v)
+        if use_wnum:
+            self.logger.info('absco at {:.3f}-{:.3f} cm-1, sampling at {:.3f} cm-1'.format(v1.min(),v1.max(),self.dv1))
+            self.logger.info('absco at {:.3f}-{:.3f} nm, sampling at {:.3f} nm'.format((1e7/v1).min(),(1e7/v1).max(),fwhm/2.1))
+        else:
+            self.logger.info('absco at {:.3f}-{:.3f} nm, sampling at {:.3f} nm'.format(absco_w.min(),absco_w.max(),self.dw1))
+        
         self.abscos = abscos   
     
     def set_property(self,vza=0.,Ts=None,TC=0.,emissivity=1.,
@@ -429,7 +463,7 @@ class Longwave(object):
     
     def get_jacobian(self,key,finite_difference=False,fd_delta=None,
                      fd_relative_delta=None,
-                     wrt='mixing ratio'):
+                     wrt='mixing ratio',upper_B_jac=False,lower_B_jac=False):
         ''' 
         key:
             a key name in self.profile or a scalar attribute of self
@@ -443,6 +477,10 @@ class Longwave(object):
         wrt:
             gas jacobian with respect to 'relative mixing ratio','mixing ratio', 
             'number density', or 'optical depth'
+        upper_B_jac:
+            if true, consider upper B in dBi/dTi
+        lower_B_jac:
+            if true, consider lower B's impact on layer below
         '''
         if finite_difference:
             if key in ['Ts']:
@@ -540,8 +578,15 @@ class Longwave(object):
                 B_level = np.zeros((self.nlevel,len(self.w1)))
                 B_layer = np.zeros((self.nlayer,len(self.w1)))
                 dB_layerdT = np.zeros((self.nlayer,len(self.w1)))
+                if upper_B_jac or lower_B_jac:
+                    dB_leveldT = np.zeros((self.nlevel,len(self.w1)))
                 for ilevel in range(self.nlevel):
-                    B_level[ilevel,] = BB(self.profiles['T_level'][ilevel],self.w1,radiance_unit)
+                    if upper_B_jac or lower_B_jac:
+                        B_level[ilevel,], dB_leveldT[ilevel,] = BB(
+                            self.profiles['T_level'][ilevel],
+                            self.w1,radiance_unit,do_dBdT=True)
+                    else:
+                        B_level[ilevel,] = BB(self.profiles['T_level'][ilevel],self.w1,radiance_unit)
                 for ilayer in range(self.nlayer):
                     B_layer[ilayer,], dB_layerdT[ilayer,] = BB(
                         self.profiles['T_layer'][ilayer],
@@ -563,6 +608,11 @@ class Longwave(object):
                 dB_taudB_layer = 1/(1+upper_weight)
                 dB_taudT = dB_taudtau*dtau_layer_mudT+dB_taudB_layer*dB_layerdT
                 
+                if upper_B_jac or lower_B_jac:
+                    dB_taudB_upper = upper_weight/(1+upper_weight)
+                if upper_B_jac:
+                    dB_taudT += dB_taudB_upper*dB_leveldT[1:]*0.5
+                
                 for ilayer in range(self.nlayer):
                     jac[:,ilayer] = -Bs*np.exp(-tau_level_mu[-1,])*dtau_layer_mudT[ilayer,]+\
                         (np.exp(-dtau_layer_mu[ilayer,])*dtau_layer_mudT[ilayer,]*B_tau[ilayer,]+\
@@ -574,6 +624,12 @@ class Longwave(object):
                                    *np.exp(tau_level_mu[1:ilayer+1,]-tau_level_mu[-1,])
                                    *dtau_layer_mudT[ilayer,]\
                                    ,axis=0)
+                        if lower_B_jac:
+                            jac[:,ilayer] += \
+                            (1-np.exp(-dtau_layer_mu[ilayer-1,]))\
+                            *np.exp(tau_level_mu[ilayer]-tau_level_mu[-1,])\
+                            *dB_taudB_upper[ilayer-1,]\
+                            *dB_leveldT[ilayer,]*0.5
                     
             elif key in self.gas_names:
                 self.get_sigmas()
