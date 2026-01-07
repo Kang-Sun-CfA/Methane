@@ -270,11 +270,12 @@ class Longwave(object):
                 absco_sigma = nc['CrossSection'][:,:,:,w_mask].filled(np.nan)
             if igas == 0:
                 if use_wnum:
+                    # wnum decreases, wavelength increaes
                     v1 = arange_(start_v,end_v,dv1)[::-1]
                     self.v1 = v1
                     self.dv1 = np.abs(np.mean(np.diff(self.v1)))
                     self.w1 = 1e7/v1
-                    # convolve high res w grid by a kernel 2.1 times wider than the v grid size
+                    # convolve high res w grid by a kernel fwhm 2.1 times wider than the v grid size
                     fwhm = np.abs(np.mean(np.diff(1e7/v1)))*2.1
                     hw1e = fwhm/1.665
                     dabsco_w = np.abs(np.mean(np.diff(absco_w)))
@@ -286,7 +287,7 @@ class Longwave(object):
                     self.w1 = absco_w
                     self.dw1 = np.abs(np.mean(np.diff(self.w1)))
             else:
-                if not np.array_equal(self.w1, absco_w):
+                if not np.array_equal(self.w1, absco_w) and not use_wnum:
                     self.logger.warning(f'wavelength grid of {gas} differs from {gas_names[0]}')
             
             if not use_wnum:
