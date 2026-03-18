@@ -377,8 +377,13 @@ class LWOE(object):
         result.Shat = Shat
         AVK = Shat@K.T@Sy_inv@K
         result.AVK = AVK
+        G = Sa@K.T@np.linalg.inv(K@Sa@K.T+Sy)
+        Sm = G@Sy@G.T
+        result.Sm = Sm
         params.update_matrices(matrix_name='posterior_error_matrix',matrix=Shat)
         params.update_vectors(vector_name='posterior_error',vector=np.sqrt(np.diag(Shat)))
+        params.update_matrices(matrix_name='measurement_error_matrix',matrix=Sm)
+        params.update_vectors(vector_name='measurement_error',vector=np.sqrt(np.diag(Sm)))
         params.update_matrices(matrix_name='averaging_kernel',matrix=AVK)
         params.update_vectors(vector_name='dofs',vector=np.diag(AVK))
         result.params = params
