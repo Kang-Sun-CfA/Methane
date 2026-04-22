@@ -237,10 +237,12 @@ def get_Gamma(x0s,x1s):
 
     return gamma_matrix
 
+
 class Longwave(object):
     '''class representing a band in the longwave. Custom RTM based on EPS237'''
     def __init__(self,start_w,end_w,gas_names,
-                 absco_path_pattern='/home/kangsun/N2O/n2o_run/data/splat_data/SAO_crosssections/splatv2_xsect/HITRAN2020_*_4500-4650nm_0p00_0p002dw.nc',
+                 absco_paths=None,
+                 absco_path_pattern=None,
                  use_wnum=False,dv1=0.01
                  ):
         '''
@@ -253,27 +255,39 @@ class Longwave(object):
         self.start_w = start_w
         self.end_w = end_w
         if use_wnum:
-            start_v,end_v = 1e7/end_w,1e7/start_w
+            self.start_v,self.end_v = 1e7/end_w,1e7/start_w
         self.gas_names = gas_names
-        
-        abscos = {}
-        for igas,gas in enumerate(gas_names):
-            absco_fn = absco_path_pattern.replace('*',gas)
+        self.use_wnum = use_wnum
+        self.dv1 = dv1
+        if absco_paths is not None or absco_path_pattern is not None:
+            self.get_absco(absco_paths,absco_path_pattern,dv1)
+    
+    def get_absco(self,absco_paths=None,
+                 absco_path_pattern=None,
+                 dv1=0.01):
+        abscos = {} if not hasattr(self,'abscos') else self.abscos
+        for igas,gas in enumerate(self.gas_names):
+            if absco_paths is not None:
+                absco_fn = absco_paths[gas]
+            else:
+                absco_fn = absco_path_pattern.replace('*',gas)
+            if gas in abscos.keys():
+                self.logger.warning(f'{gas} absco will be overwritten')
             self.logger.info(f'loading {absco_fn}')
             with Dataset(absco_fn,'r') as nc:
                 absco_T = nc['Temperature'][:].filled(np.nan)
                 absco_P = nc['Pressure'][:].filled(np.nan)
                 absco_B = nc['Broadener_01_VMR'][:].filled(np.nan)
                 absco_w = nc['Wavelength'][:].filled(np.nan)
-                w_mask = (absco_w>=start_w) & (absco_w<=end_w)
+                w_mask = (absco_w>=self.start_w) & (absco_w<=self.end_w)
                 absco_w = absco_w[w_mask]
                 absco_sigma = nc['CrossSection'][:,:,:,w_mask].filled(np.nan)
             if igas == 0:
-                if use_wnum:
+                if self.use_wnum:
                     # wnum decreases, wavelength increaes
-                    v1 = arange_(start_v,end_v,dv1)[::-1]
+                    v1 = arange_(self.start_v,self.end_v,dv1)[::-1]
                     self.v1 = v1
-                    self.dv1 = np.abs(np.mean(np.diff(self.v1)))
+#                     self.dv1 = np.abs(np.mean(np.diff(self.v1)))
                     self.w1 = 1e7/v1
                     # convolve high res w grid by a kernel fwhm 2.1 times wider than the v grid size
                     fwhm = np.abs(np.mean(np.diff(1e7/v1)))*2.1
@@ -287,10 +301,10 @@ class Longwave(object):
                     self.w1 = absco_w
                     self.dw1 = np.abs(np.mean(np.diff(self.w1)))
             else:
-                if not np.array_equal(self.w1, absco_w) and not use_wnum:
+                if not np.array_equal(self.w1, absco_w) and not self.use_wnum:
                     self.logger.warning(f'wavelength grid of {gas} differs from {gas_names[0]}')
             
-            if not use_wnum:
+            if not self.use_wnum:
                 abscos[gas] = dict(absco_T=absco_T,absco_P=absco_P,absco_B=absco_B,\
                                    absco_w=absco_w,absco_sigma=absco_sigma)
             else:
@@ -303,7 +317,7 @@ class Longwave(object):
                             absco_sigma_v[iP,iT,iB,:] = np.interp(1e7/v1,absco_w,ss)
                 abscos[gas] = dict(absco_T=absco_T,absco_P=absco_P,absco_B=absco_B,\
                                    absco_w=1e7/v1,absco_v=v1,absco_sigma=absco_sigma_v)
-        if use_wnum:
+        if self.use_wnum:
             self.logger.info('absco at {:.3f}-{:.3f} cm-1, sampling at {:.3f} cm-1'.format(v1.min(),v1.max(),self.dv1))
             self.logger.info('absco at {:.3f}-{:.3f} nm, sampling at {:.3f} nm'.format((1e7/v1).min(),(1e7/v1).max(),fwhm/2.1))
         else:
@@ -462,8 +476,39 @@ class Longwave(object):
         jacs['Radiance_error'] = jacs['Radiance']/SNR
         self.jacs = jacs
     
+    def get_emissivity_jacobian(self,refresh_sigma=True):
+        if callable(self.emissivity):
+            emissivity,basis = self.emissivity(self.w1,return_basis=True)
+        else:
+            self.logger.error('emissivity should be a ChebyshevEmissivity object')
+            return
+        if refresh_sigma:
+            self.get_sigmas()
+        jac = np.full((len(self.w1),self.emissivity.deg),np.nan)
+        Ts = self.Ts
+        vza = self.vza
+        mu = np.cos(vza/180*np.pi)
+        radiance_unit = self.radiance_unit
+        # surface planck function
+        Bs = BB(Ts,self.w1,radiance_unit,do_dBdT=False)
+        # planck function for layer and level temperatures, sfc->toa
+        B_level = np.zeros((self.nlevel,len(self.w1)))
+        B_layer = np.zeros((self.nlayer,len(self.w1)))
+        dB_layerdT = np.zeros((self.nlayer,len(self.w1)))
+        for ilevel in range(self.nlevel):
+            B_level[ilevel,] = BB(self.profiles['T_level'][ilevel],self.w1,radiance_unit)
+        for ilayer in range(self.nlayer):
+            B_layer[ilayer,], dB_layerdT[ilayer,] = BB(
+                self.profiles['T_layer'][ilayer],
+                self.w1,radiance_unit,do_dBdT=True)
+        # slant optical thickness, sfc->toa
+        dtau_layer_mu = self.dtau_layer/mu
+        for ideg in range(self.emissivity.deg):
+            jac[:,ideg] = Bs * np.exp(-np.nansum(dtau_layer_mu,axis=0)) * basis[ideg]
+        return jac
+    
     def get_jacobian(self,key,finite_difference=False,fd_delta=None,
-                     fd_relative_delta=None,
+                     fd_relative_delta=None,refresh_sigma=True,
                      wrt='mixing ratio',upper_B_jac=False,lower_B_jac=False):
         ''' 
         key:
@@ -535,7 +580,8 @@ class Longwave(object):
                 self.get_sigmas()
         else:
             if key in ['Ts']:
-                self.get_sigmas()
+                if refresh_sigma:
+                    self.get_sigmas()
                 jac = np.full((len(self.w1),1),np.nan)
                 Ts = self.Ts
                 if callable(self.emissivity):
@@ -562,7 +608,8 @@ class Longwave(object):
                 jac[:,0] = emissivity * dBsdTs * np.exp(-np.nansum(dtau_layer_mu,axis=0))
                 
             elif key in ['T_layer']:
-                self.get_sigmas(do_dsigmadT=True)
+                if refresh_sigma:
+                    self.get_sigmas(do_dsigmadT=True)
                 jac = np.full((len(self.w1),self.nlayer),np.nan)
                 Ts = self.Ts
                 if callable(self.emissivity):
@@ -633,7 +680,8 @@ class Longwave(object):
                             *dB_leveldT[ilayer,]*0.5
                     
             elif key in self.gas_names:
-                self.get_sigmas()
+                if refresh_sigma:
+                    self.get_sigmas()
                 jac = np.full((len(self.w1),self.nlayer),np.nan)
                 Ts = self.Ts
                 if callable(self.emissivity):

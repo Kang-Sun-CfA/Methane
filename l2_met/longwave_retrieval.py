@@ -9,11 +9,31 @@ from collections import OrderedDict
 import logging
 import inspect
 
+
+class ChebyshevEmissivity():
+    def __init__(self,deg,coef=None):
+        self.deg = deg
+        if coef is None:
+            coef = np.zeros(self.deg)
+            coef[0] = 1.
+        self.coef = coef
+        
+    def __call__(self,w,return_basis=False):
+        basis = np.array(
+            [np.polynomial.chebyshev.Chebyshev.basis(i,domain=[np.min(w),np.max(w)])(w) for i in range(self.deg)]
+        )
+        out = np.array([b*c for b,c in zip(basis,self.coef)]).sum(axis=0)
+        if return_basis:
+            return out,basis
+        else:
+            return out
+    
+
 def forward_func(
     lw,w2,ILS,vza,w_shift=0,
-    T_layer=None,N2O=None,CH4=None,H2O=None,Ts=None,emissivity=None,
+    T_layer=None,N2O=None,CH4=None,H2O=None,Ts=None,
     T_layer_scale=1.,N2O_scale=1.,CH4_scale=1.,H2O_scale=1.,
-    return_all_jacs=True
+    emis_0=0.95,emis_1=0.,emis_2=0.,emis_3=0.,emis_4=0.
 ):
     '''
     lw:
@@ -36,7 +56,6 @@ def forward_func(
                 [T_layer[0]],(T_layer[0:-1]+T_layer[1:])/2,[T_layer[-1]]
             )
         )
-        profile_keys.append('T_layer')
     else:
         lw.profiles['T_layer'] *= T_layer_scale
         lw.profiles['T_level'] = np.concatenate(
@@ -49,32 +68,26 @@ def forward_func(
     
     if N2O is not None:
         lw.profiles['N2O'] = N2O*N2O_scale
-        profile_keys.append('N2O')
     else:
         lw.profiles['N2O'] *= N2O_scale
     
     if CH4 is not None:
         lw.profiles['CH4'] = CH4*CH4_scale
-        profile_keys.append('CH4')
     else:
         lw.profiles['CH4'] *= CH4_scale
     
     if H2O is not None:
         lw.profiles['H2O'] = H2O*H2O_scale
-        profile_keys.append('H2O')
     else:
         lw.profiles['H2O'] *= H2O_scale
     
     if Ts is not None:
         lw.Ts = Ts
-        scalar_keys.append('Ts')
-    if emissivity is not None:
-        lw.emissivity = emissivity
-        scalar_keys.append('emissivity')
     
-    if return_all_jacs:
-        profile_keys = ['T_layer','N2O','CH4','H2O']
-        scalar_keys = ['Ts']
+    profile_keys = ['T_layer','N2O','CH4','H2O']
+    scalar_keys = ['Ts']#+[f'emis_{i}' for i in range(5)]
+    emissivity = ChebyshevEmissivity(5,coef=[emis_0,emis_1,emis_2,emis_3,emis_4])
+    lw.emissivity = emissivity
     
     scales_dict = {
         'T_layer':T_layer_scale,
@@ -83,10 +96,17 @@ def forward_func(
         'H2O':H2O_scale
     }
     jacs = OrderedDict()
+    lw.get_sigmas(do_dsigmadT=True)
+    jac_emis = lw.get_emissivity_jacobian(refresh_sigma=False)
+    for ideg in range(lw.emissivity.deg):
+        jac_emis_ils = convolve_fft(jac_emis[:,ideg],ILS,normalize_kernel=True)
+        bspline_coef = splrep(w1,jac_emis_ils)
+        jacs[f'emis_{ideg}'] = splev(w2+w_shift,bspline_coef).reshape(1,len(w2))
+    
     for key in profile_keys:
         jacs[key] = np.zeros((lw.nlayer,len(w2)))
         jac_w1 = lw.get_jacobian(
-            key,upper_B_jac=True,lower_B_jac=True
+            key,upper_B_jac=True,lower_B_jac=True,refresh_sigma=False
         )
         profile0 = lw.profiles[key]/scales_dict[key]
         jac_scale_w1 = np.sum(
@@ -106,15 +126,13 @@ def forward_func(
         
     for key in scalar_keys:
         jacs[key] = np.zeros((1,len(w2)))
-        jac_w1 = lw.get_jacobian(key)
+        jac_w1 = lw.get_jacobian(key,refresh_sigma=False)
         jac = convolve_fft(
             jac_w1[:,0],ILS,normalize_kernel=True
         )
         bspline_coef = splrep(w1,jac)
         jacs[key][0,:] = splev(w2+w_shift,bspline_coef)
     
-    if len(profile_keys) == 0 and len(scalar_keys) == 0:
-        lw.get_sigmas()
     r1_oversampled = convolve_fft(lw.get_radiance(),ILS,normalize_kernel=True)
     bspline_coef = splrep(w1,r1_oversampled)
     jacs['radiance'] = splev(w2+w_shift,bspline_coef)
@@ -290,8 +308,8 @@ class LWOE(object):
         return params
     
     def retrieve(self,radiance,radiance_error,
-                 params=None,max_iter=100,use_LM=False,
-                 max_diverging_step=5,converge_criterion_scale=1,**kwargs):
+                 params=None,max_iter=100,use_LM=False,LM_gamma=1000,
+                 max_diverging_step=5,converge_criterion_scale=0.01,**kwargs):
         
         if params is None:
             params = self.make_params()
@@ -308,8 +326,6 @@ class LWOE(object):
         dsigma2 = np.inf
         result = RetrievalResults()
         result.if_success = True
-        if use_LM:
-            LM_gamma = 10.
         
         while(dsigma2 > nstates*converge_criterion_scale and count < max_iter):
             self.logger.info('Iteration {}'.format(count))
